@@ -1,69 +1,409 @@
-import Image from "next/image";
+"use client";
+
+import { useState, useEffect } from "react";
+import { WordAnalysis } from "@/lib/schema";
+import SettingsModal from "@/components/SettingsModal";
+import { 
+  Search, 
+  Volume2, 
+  BookOpen, 
+  GitBranch, 
+  Lightbulb, 
+  AlertTriangle, 
+  XCircle, 
+  BookmarkPlus,
+  Settings,
+  Sparkles,
+  Layers,
+  GraduationCap,
+  Languages
+} from "lucide-react";
 
 export default function Home() {
+  const [inputText, setInputText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [cards, setCards] = useState<WordAnalysis[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [currentConfigName, setCurrentConfigName] = useState<string>("Gemini (系統預設)");
+
+  const checkConfig = () => {
+    const saved = localStorage.getItem("vocab_api_config_v2");
+    if (saved) {
+      try {
+        const cfg = JSON.parse(saved);
+        const providerNames: Record<string, string> = {
+          gemini: "Gemini",
+          groq: "Groq",
+          openrouter: "OpenRouter",
+          "openai-compatible": "OpenAI 相容"
+        };
+        const active = cfg.activeProvider || "gemini";
+        const model = cfg.configs?.[active]?.modelId || "預設";
+        setCurrentConfigName(`${providerNames[active] || active} (${model})`);
+      } catch {
+        setCurrentConfigName("Gemini (系統預設)");
+      }
+    } else {
+      setCurrentConfigName("Gemini (系統預設)");
+    }
+  };
+
+  useEffect(() => {
+    checkConfig();
+  }, []);
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputText.trim()) return;
+
+    setLoading(true);
+    setError(null);
+
+    let apiConfig = undefined;
+    const saved = localStorage.getItem("vocab_api_config_v2");
+    if (saved) {
+      try {
+        apiConfig = JSON.parse(saved);
+      } catch (err) {
+        console.error("解析 API 設定失敗:", err);
+      }
+    }
+
+    try {
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          input: inputText.trim(),
+          config: apiConfig
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error || "查詢失敗，請確認 API 設定或稍後再試");
+      }
+
+      setCards(json);
+    } catch (err: any) {
+      setError(err.message || "發生未知錯誤");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const playAudio = (text: string) => {
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "en-US";
+      utterance.rate = 0.9;
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  const renderLevelBadge = (level: string) => {
+    let colorClass = "bg-slate-100 text-slate-700 border-slate-200";
+    let desc = "7000單外";
+
+    if (level === "Level 1" || level === "Level 2") {
+      colorClass = "bg-emerald-50 text-emerald-700 border-emerald-200";
+      desc = "國中基礎";
+    } else if (level === "Level 3" || level === "Level 4") {
+      colorClass = "bg-blue-50 text-blue-700 border-blue-200";
+      desc = "學測核心";
+    } else if (level === "Level 5" || level === "Level 6") {
+      colorClass = "bg-purple-50 text-purple-700 border-purple-200";
+      desc = "分科進階";
+    }
+
+    return (
+      <div className={`flex items-center gap-1 px-2.5 py-0.5 text-xs font-bold border rounded-full ${colorClass}`}>
+        <GraduationCap className="h-3.5 w-3.5" />
+        <span>{level}</span>
+        <span className="text-[10px] opacity-75">({desc})</span>
+      </div>
+    );
+  };
+
+  // 判斷是否為中文查詢輸入
+  const isChineseInput = (original: string) => {
+    return /[\u4e00-\u9fa5]/.test(original);
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <main className="min-h-screen bg-slate-50 py-10 px-4 sm:px-6">
+      <div className="max-w-3xl mx-auto space-y-6">
+        
+        {/* Header */}
+        <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-6 w-6 text-blue-600" />
+              <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+                單字深度學習系統
+              </h1>
+            </div>
+            <p className="text-slate-500 text-xs">
+              支援：<span className="font-semibold text-slate-700">中英雙向查詢、學測 7000 單分級</span> ｜ 引擎：<span className="font-mono font-semibold text-blue-600">{currentConfigName}</span>
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsSettingsOpen(true)}
+            className="self-start sm:self-auto px-4 py-2 text-slate-700 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 border border-slate-200 rounded-xl transition shadow-sm flex items-center gap-2 text-xs font-semibold"
           >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
+            <Settings className="h-4 w-4" />
+            <span>自訂 API / 模型</span>
+          </button>
+        </header>
+
+        {/* 搜尋欄 */}
+        <form onSubmit={handleSearch} className="flex gap-2">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder="輸入英文或中文（空白分隔），例如：放棄 persistent 繁榮"
+              className="w-full pl-10 pr-4 py-3.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-slate-900 placeholder-slate-400 text-sm shadow-sm transition"
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+            <Search className="absolute left-3.5 top-4 h-4 w-4 text-slate-400" />
+          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="px-6 py-3.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 transition whitespace-nowrap text-sm shadow-sm flex items-center gap-2"
           >
-            Documentation
-          </a>
+            {loading ? (
+              <>
+                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                <span>分析中...</span>
+              </>
+            ) : (
+              "深度解析"
+            )}
+          </button>
+        </form>
+
+        {/* 錯誤提示 */}
+        {error && (
+          <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm flex items-start gap-3 shadow-sm">
+            <XCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <span className="font-semibold block">分析失敗</span>
+              <p className="text-xs text-red-600 leading-relaxed">{error}</p>
+            </div>
+          </div>
+        )}
+
+        {/* 單字卡清單 */}
+        <div className="space-y-6">
+          {cards.map((data, index) => {
+            if (!data.isValid) {
+              return (
+                <div
+                  key={`invalid-${index}`}
+                  className="bg-red-50/70 border border-red-200 rounded-2xl p-5 flex items-center justify-between shadow-sm"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <XCircle className="h-5 w-5 text-red-500" />
+                      <span className="font-mono font-bold text-red-900 text-lg">
+                        {data.originalWord}
+                      </span>
+                    </div>
+                    <p className="text-xs text-red-600">
+                      {data.errorMessage || "查無此單字/詞彙，請檢查拼字。"}
+                    </p>
+                  </div>
+                  <span className="px-2.5 py-1 text-xs font-semibold bg-red-100 text-red-700 rounded-md border border-red-200">
+                    無效字詞
+                  </span>
+                </div>
+              );
+            }
+
+            return (
+              <div
+                key={`${data.word}-${index}`}
+                className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6 transition hover:shadow-md"
+              >
+                {/* 中文查詢提示 Banner */}
+                {isChineseInput(data.originalWord) && (
+                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs px-3.5 py-2.5 rounded-xl flex items-center gap-2 font-medium">
+                    <Languages className="h-4 w-4 text-emerald-600 shrink-0" />
+                    <span>
+                      中文概念「<strong>{data.originalWord}</strong>」對應的核心英文單字：<strong>{data.word}</strong>
+                    </span>
+                  </div>
+                )}
+
+                {/* 拼錯更正提示 Banner */}
+                {data.isCorrected && !isChineseInput(data.originalWord) && (
+                  <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs px-3.5 py-2.5 rounded-xl flex items-center gap-2 font-medium">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                    <span>
+                      偵測到輸入「<strong>{data.originalWord}</strong>」可能有誤，已自動為您更正並分析「<strong>{data.word}</strong>」。
+                    </span>
+                  </div>
+                )}
+
+                {/* 標題與學測分級標籤 */}
+                <div className="flex justify-between items-start border-b border-slate-100 pb-4">
+                  <div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">
+                        {data.word}
+                      </h2>
+                      {renderLevelBadge(data.level)}
+                    </div>
+                    <div className="flex items-center gap-2 mt-1.5 text-slate-600">
+                      <span className="font-mono text-sm">{data.phonetic}</span>
+                      <button
+                        type="button"
+                        onClick={() => playAudio(data.word)}
+                        className="p-1 hover:bg-slate-100 rounded-full transition text-blue-600 focus:outline-none"
+                        title="朗讀發音"
+                      >
+                        <Volume2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => alert(`已觸發收藏「${data.word}」，Phase 2 將寫入 Firestore`)}
+                    className="px-3 py-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition border border-slate-200 flex items-center gap-1.5 text-xs font-semibold"
+                  >
+                    <BookmarkPlus className="h-4 w-4" />
+                    <span>收藏</span>
+                  </button>
+                </div>
+
+                {/* 語意拆解 */}
+                <section className="space-y-2.5">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <BookOpen className="h-3.5 w-3.5 text-slate-400" /> 語意拆解
+                  </h3>
+                  <div className="space-y-2">
+                    {data.meanings.map((m, idx) => (
+                      <div key={idx} className="flex flex-wrap items-baseline gap-2 text-sm">
+                        <span className="text-xs font-bold px-2 py-0.5 bg-slate-100 text-slate-700 rounded border border-slate-200">
+                          {m.pos}
+                        </span>
+                        <span className="font-semibold text-slate-900">{m.primary}</span>
+                        {m.secondary && m.secondary.length > 0 && (
+                          <span className="text-xs text-slate-500">
+                            ({m.secondary.join("、")})
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                {/* 常用搭配詞 */}
+                {data.collocations && data.collocations.length > 0 && (
+                  <section className="space-y-2.5 bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+                    <h3 className="text-xs font-bold text-blue-900 flex items-center gap-1.5 uppercase tracking-wider">
+                      <Layers className="h-3.5 w-3.5 text-blue-600" /> 常用搭配詞 (Collocations)
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                      {data.collocations.map((col, cIdx) => (
+                        <div key={cIdx} className="bg-white p-3 rounded-lg border border-blue-200/60 space-y-1 shadow-2xs">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className="font-bold text-slate-900 text-sm">{col.phrase}</span>
+                            <span className="text-xs text-blue-700 font-medium">{col.meaning}</span>
+                          </div>
+                          {col.example && (
+                            <p className="text-[11px] text-slate-500 italic border-t border-slate-100 pt-1">
+                              "{col.example}"
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* 字源與字根關聯 */}
+                <section className="space-y-3 bg-slate-50/80 p-4 rounded-xl border border-slate-100">
+                  <h3 className="text-xs font-bold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
+                    <GitBranch className="h-3.5 w-3.5 text-blue-600" /> 字源與字根關聯
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-sm text-slate-600">
+                    <div>
+                      <span className="text-slate-400 text-[11px] block">字首 (Prefix)</span>
+                      <strong className="text-slate-800 text-xs">{data.etymology.prefix || "無"}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 text-[11px] block">字根 (Root)</span>
+                      <strong className="text-slate-800 text-xs">{data.etymology.root || "無"}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 text-[11px] block">字尾 (Suffix)</span>
+                      <strong className="text-slate-800 text-xs">{data.etymology.suffix || "無"}</strong>
+                    </div>
+                  </div>
+                  {data.etymology.relatedWords && data.etymology.relatedWords.length > 0 && (
+                    <div className="text-xs border-t border-slate-200/80 pt-2.5 mt-1 text-slate-600">
+                      <span className="font-medium text-slate-700">同源衍生詞：</span>
+                      <span className="text-blue-600 font-medium">
+                        {data.etymology.relatedWords.join(", ")}
+                      </span>
+                    </div>
+                  )}
+                </section>
+
+                {/* 記憶技巧 */}
+                {data.mnemonics && (
+                  <section className="space-y-1.5 bg-amber-50/60 p-4 rounded-xl border border-amber-200/60">
+                    <h3 className="text-xs font-bold text-amber-800 flex items-center gap-1.5 uppercase tracking-wider">
+                      <Lightbulb className="h-3.5 w-3.5 text-amber-600" /> 記憶技巧
+                    </h3>
+                    <p className="text-xs sm:text-sm text-amber-900 leading-relaxed font-normal">
+                      {data.mnemonics}
+                    </p>
+                  </section>
+                )}
+
+                {/* 語境例句 */}
+                <section className="space-y-3">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                    語境例句
+                  </h3>
+                  <div className="space-y-2.5">
+                    {data.examples.map((ex, idx) => (
+                      <div key={idx} className="text-sm space-y-0.5 border-l-2 border-blue-500 pl-3 py-0.5">
+                        <p className="text-slate-900 font-medium">{ex.en}</p>
+                        <p className="text-slate-500 text-xs">{ex.zh}</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                {/* 同義詞 */}
+                {data.synonyms && data.synonyms.length > 0 && (
+                  <div className="pt-3 border-t border-slate-100 flex items-center gap-2 text-xs text-slate-500">
+                    <span className="font-medium text-slate-700">同義詞：</span>
+                    <span>{data.synonyms.join(", ")}</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-      </main>
-    </div>
+      </div>
+
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onSaved={checkConfig}
+      />
+    </main>
   );
 }
