@@ -3,6 +3,8 @@
 import React, { useState, useEffect } from "react";
 import { WordAnalysis } from "@/lib/schema";
 import SettingsModal from "@/components/SettingsModal";
+import ClickableText from "@/components/ClickableText";
+import QuickLookupModal, { QuickLookupData } from "@/components/QuickLookupModal";
 import { 
   Search, 
   Volume2, 
@@ -17,17 +19,26 @@ import {
   Layers,
   GraduationCap,
   Languages,
-  Zap
+  Zap,
+  Loader2
 } from "lucide-react";
+
+// 擴展型別：支援進行中載入卡片
+type DisplayCard = WordAnalysis & { isAsyncLoading?: boolean };
 
 export default function Home() {
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
-  const [cards, setCards] = useState<WordAnalysis[]>([]);
+  const [cards, setCards] = useState<DisplayCard[]>([]);
   const [error, setError] = useState<string | null>(null);
   
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [currentConfigName, setCurrentConfigName] = useState<string>("Gemini (系統預設)");
+
+  // 快查彈窗狀態
+  const [isQuickOpen, setIsQuickOpen] = useState(false);
+  const [quickLoading, setQuickLoading] = useState(false);
+  const [quickData, setQuickData] = useState<QuickLookupData | null>(null);
 
   const checkConfig = () => {
     const saved = localStorage.getItem("vocab_api_config_v2");
@@ -54,6 +65,94 @@ export default function Home() {
   useEffect(() => {
     checkConfig();
   }, []);
+
+  // 1. 點擊任何單字時觸發本地秒查
+  const handleWordClick = async (word: string) => {
+    const clean = word.replace(/^[^a-zA-Z]+|[^a-zA-Z]+$/g, "");
+    if (!clean) return;
+
+    setQuickLoading(true);
+    setQuickData({ found: false, word: clean });
+    setIsQuickOpen(true);
+
+    try {
+      const res = await fetch(`/api/quick-lookup?word=${encodeURIComponent(clean)}`);
+      const data = await res.json();
+      setQuickData(data);
+    } catch {
+      setQuickData({ found: false, word: clean });
+    } finally {
+      setQuickLoading(false);
+    }
+  };
+
+  // 2. 深度非同步解析單一單字（漸進式載入）
+  const triggerDeepAnalysisForWord = async (wordToAnalyze: string) => {
+    const tempId = `async-${Date.now()}`;
+    
+    // 先在頂部塞入一張「載入中骨架卡」
+    const placeholderCard: DisplayCard = {
+      originalWord: wordToAnalyze,
+      isValid: true,
+      isCorrected: false,
+      errorMessage: "",
+      word: wordToAnalyze,
+      phonetic: quickData?.phonetic || "",
+      level: quickData?.level || "分析中...",
+      source: "dict+ai", // 👈 補上 source
+      meanings: quickData?.translation 
+        ? [{ pos: "釋義", primary: quickData.translation.split("；")[0] || "", secondary: [] }] 
+        : [],
+      collocations: [],
+      etymology: { prefix: "", root: "", suffix: "", relatedWords: [] },
+      mnemonics: "",
+      examples: [],
+      synonyms: [],
+      confusables: [], // 👈 補上 confusables
+      isAsyncLoading: true,
+    };
+
+    setCards((prev) => [placeholderCard, ...prev]);
+
+    let apiConfig = undefined;
+    const saved = localStorage.getItem("vocab_api_config_v2");
+    if (saved) {
+      try {
+        apiConfig = JSON.parse(saved);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    try {
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          input: wordToAnalyze,
+          config: apiConfig
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "分析失敗");
+
+      const enrichedCard = Array.isArray(json) ? json[0] : json;
+
+      // 用後端回傳的完整深度資料覆寫該骨架卡片
+      setCards((prev) =>
+        prev.map((c) => (c.originalWord === wordToAnalyze && c.isAsyncLoading ? enrichedCard : c))
+      );
+    } catch (err: any) {
+      setCards((prev) =>
+        prev.map((c) =>
+          c.originalWord === wordToAnalyze && c.isAsyncLoading
+            ? { ...c, isAsyncLoading: false, errorMessage: err.message || "深度生成失敗", isValid: false }
+            : c
+        )
+      );
+    }
+  };
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -109,12 +208,11 @@ export default function Home() {
     }
   };
 
-const renderLevelBadge = (rawLevel: string) => {
+  const renderLevelBadge = (rawLevel: string) => {
     let colorClass = "bg-slate-100 text-slate-700 border-slate-200";
     let desc = "7000單外";
     let displayLevel = "7000單外";
 
-    // 只比對 1 到 6 的大考分級數字，避免 7000 被誤抓
     const match = rawLevel.match(/\b([1-6])\b/);
     if (match) {
       const num = parseInt(match[1], 10);
@@ -178,7 +276,7 @@ const renderLevelBadge = (rawLevel: string) => {
               </h1>
             </div>
             <p className="text-slate-500 text-xs">
-              支援：<span className="font-semibold text-slate-700">中英雙向查詢、學測 7000 單分級</span> ｜ 引擎：<span className="font-mono font-semibold text-blue-600">{currentConfigName}</span>
+              支援：<span className="font-semibold text-slate-700">中英雙向查詢、點擊單字快查、7000 單分級</span> ｜ 引擎：<span className="font-mono font-semibold text-blue-600">{currentConfigName}</span>
             </p>
           </div>
 
@@ -211,7 +309,7 @@ const renderLevelBadge = (rawLevel: string) => {
           >
             {loading ? (
               <>
-                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                <Loader2 className="w-4 h-4 animate-spin" />
                 <span>分析中...</span>
               </>
             ) : (
@@ -261,8 +359,15 @@ const renderLevelBadge = (rawLevel: string) => {
             return (
               <div
                 key={`${data.word}-${index}`}
-                className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6 transition hover:shadow-md"
+                className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6 transition hover:shadow-md relative overflow-hidden"
               >
+                {/* 漸進式載入進度條 */}
+                {data.isAsyncLoading && (
+                  <div className="absolute top-0 left-0 right-0 h-1 bg-blue-100 overflow-hidden">
+                    <div className="h-full bg-blue-600 animate-pulse w-full"></div>
+                  </div>
+                )}
+
                 {/* 中文查詢提示 Banner */}
                 {isChineseInput(data.originalWord) && (
                   <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs px-3.5 py-2.5 rounded-xl flex items-center gap-2 font-medium">
@@ -291,7 +396,14 @@ const renderLevelBadge = (rawLevel: string) => {
                         {data.word}
                       </h2>
                       {renderLevelBadge(data.level)}
-                      {renderSourceBadge(data.source)}
+                      {data.isAsyncLoading ? (
+                        <span className="flex items-center gap-1 text-xs text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded-full font-medium animate-pulse border border-blue-200">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          AI 深度解析生成中...
+                        </span>
+                      ) : (
+                        renderSourceBadge(data.source)
+                      )}
                     </div>
                     <div className="flex items-center gap-2 mt-1.5 text-slate-600">
                       <span className="font-mono text-sm">{data.phonetic}</span>
@@ -338,110 +450,143 @@ const renderLevelBadge = (rawLevel: string) => {
                   </div>
                 </section>
 
-                {/* 常用搭配詞 */}
-                {data.collocations && data.collocations.length > 0 && (
-                  <section className="space-y-2.5 bg-blue-50/50 p-4 rounded-xl border border-blue-100">
-                    <h3 className="text-xs font-bold text-blue-900 flex items-center gap-1.5 uppercase tracking-wider">
-                      <Layers className="h-3.5 w-3.5 text-blue-600" /> 常用搭配詞 (Collocations)
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                      {data.collocations.map((col, cIdx) => (
-                        <div key={cIdx} className="bg-white p-3 rounded-lg border border-blue-200/60 space-y-1 shadow-2xs">
-                          <div className="flex items-baseline justify-between gap-2">
-                            <span className="font-bold text-slate-900 text-sm">{col.phrase}</span>
-                            <span className="text-xs text-blue-700 font-medium">{col.meaning}</span>
-                          </div>
-                          {col.example && (
-                            <p className="text-[11px] text-slate-500 italic border-t border-slate-100 pt-1">
-                              "{col.example}"
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {/* 字源與字根關聯 */}
-                <section className="space-y-3 bg-slate-50/80 p-4 rounded-xl border border-slate-100">
-                  <h3 className="text-xs font-bold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
-                    <GitBranch className="h-3.5 w-3.5 text-blue-600" /> 字源與字根關聯
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-sm text-slate-600">
-                    <div>
-                      <span className="text-slate-400 text-[11px] block">字首 (Prefix)</span>
-                      <strong className="text-slate-800 text-xs">{data.etymology.prefix || "無"}</strong>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 text-[11px] block">字根 (Root)</span>
-                      <strong className="text-slate-800 text-xs">{data.etymology.root || "無"}</strong>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 text-[11px] block">字尾 (Suffix)</span>
-                      <strong className="text-slate-800 text-xs">{data.etymology.suffix || "無"}</strong>
-                    </div>
-                  </div>
-                  {data.etymology.relatedWords && data.etymology.relatedWords.length > 0 && (
-                    <div className="text-xs border-t border-slate-200/80 pt-2.5 mt-1 text-slate-600">
-                      <span className="font-medium text-slate-700">同源衍生詞：</span>
-                      <span className="text-blue-600 font-medium">
-                        {data.etymology.relatedWords.join(", ")}
-                      </span>
-                    </div>
-                  )}
-                </section>
-
-                {/* 記憶技巧 */}
-                {data.mnemonics && (
-                  <section className="space-y-1.5 bg-amber-50/60 p-4 rounded-xl border border-amber-200/60">
-                    <h3 className="text-xs font-bold text-amber-800 flex items-center gap-1.5 uppercase tracking-wider">
-                      <Lightbulb className="h-3.5 w-3.5 text-amber-600" /> 記憶技巧
-                    </h3>
-                    <p className="text-xs sm:text-sm text-amber-900 leading-relaxed font-normal">
-                      {data.mnemonics}
+                {/* 深度內容：非同步載入骨架或完整呈現 */}
+                {data.isAsyncLoading ? (
+                  <div className="p-6 bg-slate-50/60 rounded-xl border border-dashed border-slate-200 text-center space-y-3">
+                    <Loader2 className="h-6 w-6 text-blue-500 animate-spin mx-auto" />
+                    <p className="text-xs text-slate-500">
+                      正在為「<strong>{data.word}</strong>」生成字根拆解、聯想記憶技巧與大考例句...
                     </p>
-                  </section>
-                )}
-
-                {/* 語境例句 */}
-                {data.examples && data.examples.length > 0 && (
-                  <section className="space-y-3">
-                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                      語境例句
-                    </h3>
-                    <div className="space-y-2.5">
-                      {data.examples.map((ex, idx) => (
-                        <div key={idx} className="text-sm space-y-0.5 border-l-2 border-blue-500 pl-3 py-0.5">
-                          <p className="text-slate-900 font-medium">{ex.en}</p>
-                          <p className="text-slate-500 text-xs">{ex.zh}</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* 常用搭配詞 */}
+                    {data.collocations && data.collocations.length > 0 && (
+                      <section className="space-y-2.5 bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+                        <h3 className="text-xs font-bold text-blue-900 flex items-center gap-1.5 uppercase tracking-wider">
+                          <Layers className="h-3.5 w-3.5 text-blue-600" /> 常用搭配詞 (Collocations)
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                          {data.collocations.map((col, cIdx) => (
+                            <div key={cIdx} className="bg-white p-3 rounded-lg border border-blue-200/60 space-y-1 shadow-2xs">
+                              <div className="flex items-baseline justify-between gap-2">
+                                <span className="font-bold text-slate-900 text-sm">
+                                  <ClickableText text={col.phrase} onWordClick={handleWordClick} />
+                                </span>
+                                <span className="text-xs text-blue-700 font-medium">{col.meaning}</span>
+                              </div>
+                              {col.example && (
+                                <p className="text-[11px] text-slate-500 italic border-t border-slate-100 pt-1">
+                                  "<ClickableText text={col.example} onWordClick={handleWordClick} />"
+                                </p>
+                              )}
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </section>
-                )}
+                      </section>
+                    )}
 
-                {/* 同義詞 */}
-                {data.synonyms && data.synonyms.length > 0 && (
-                  <div className="pt-3 border-t border-slate-100 flex items-center gap-2 text-xs text-slate-500">
-                    <span className="font-medium text-slate-700">同義詞：</span>
-                    <span>{data.synonyms.join(", ")}</span>
-                  </div>
-                )}
-                {/* 形近 / 易混淆字 */}
-                {data.confusables && data.confusables.length > 0 && (
-                  <div className="pt-2.5 border-t border-slate-100 flex items-center gap-2 text-xs text-slate-500">
-                    <span className="font-medium text-amber-700 shrink-0">形近/易混淆字：</span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {data.confusables.map((cw, cIdx) => (
-                        <span
-                          key={cIdx}
-                          className="px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200/80 rounded-md font-mono text-[11px]"
-                        >
-                          {cw}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+                    {/* 字源與字根關聯 */}
+                    <section className="space-y-3 bg-slate-50/80 p-4 rounded-xl border border-slate-100">
+                      <h3 className="text-xs font-bold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
+                        <GitBranch className="h-3.5 w-3.5 text-blue-600" /> 字源與字根關聯
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-sm text-slate-600">
+                        <div>
+                          <span className="text-slate-400 text-[11px] block">字首 (Prefix)</span>
+                          <strong className="text-slate-800 text-xs">{data.etymology.prefix || "無"}</strong>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 text-[11px] block">字根 (Root)</span>
+                          <strong className="text-slate-800 text-xs">{data.etymology.root || "無"}</strong>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 text-[11px] block">字尾 (Suffix)</span>
+                          <strong className="text-slate-800 text-xs">{data.etymology.suffix || "無"}</strong>
+                        </div>
+                      </div>
+                      {data.etymology.relatedWords && data.etymology.relatedWords.length > 0 && (
+                        <div className="text-xs border-t border-slate-200/80 pt-2.5 mt-1 text-slate-600">
+                          <span className="font-medium text-slate-700">同源衍生詞：</span>
+                          <span className="text-blue-600 font-medium space-x-1.5">
+                            {data.etymology.relatedWords.map((rw, rwIdx) => (
+                              <ClickableText
+                                key={rwIdx}
+                                text={rw}
+                                onWordClick={handleWordClick}
+                                className="underline decoration-dotted"
+                              />
+                            ))}
+                          </span>
+                        </div>
+                      )}
+                    </section>
+
+                    {/* 記憶技巧 */}
+                    {data.mnemonics && (
+                      <section className="space-y-1.5 bg-amber-50/60 p-4 rounded-xl border border-amber-200/60">
+                        <h3 className="text-xs font-bold text-amber-800 flex items-center gap-1.5 uppercase tracking-wider">
+                          <Lightbulb className="h-3.5 w-3.5 text-amber-600" /> 記憶技巧
+                        </h3>
+                        <p className="text-xs sm:text-sm text-amber-900 leading-relaxed font-normal">
+                          {data.mnemonics}
+                        </p>
+                      </section>
+                    )}
+
+                    {/* 語境例句 */}
+                    {data.examples && data.examples.length > 0 && (
+                      <section className="space-y-3">
+                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                          語境例句
+                        </h3>
+                        <div className="space-y-2.5">
+                          {data.examples.map((ex, idx) => (
+                            <div key={idx} className="text-sm space-y-0.5 border-l-2 border-blue-500 pl-3 py-0.5">
+                              <p className="text-slate-900 font-medium">
+                                <ClickableText text={ex.en} onWordClick={handleWordClick} />
+                              </p>
+                              <p className="text-slate-500 text-xs">{ex.zh}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+
+                    {/* 同義詞 */}
+                    {data.synonyms && data.synonyms.length > 0 && (
+                      <div className="pt-3 border-t border-slate-100 flex items-center gap-2 text-xs text-slate-500">
+                        <span className="font-medium text-slate-700">同義詞：</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {data.synonyms.map((syn, synIdx) => (
+                            <ClickableText
+                              key={synIdx}
+                              text={syn}
+                              onWordClick={handleWordClick}
+                              className="px-1.5 py-0.5 bg-slate-100 rounded text-slate-700 hover:bg-blue-100"
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 形近 / 易混淆字 */}
+                    {data.confusables && data.confusables.length > 0 && (
+                      <div className="pt-2.5 border-t border-slate-100 flex items-center gap-2 text-xs text-slate-500">
+                        <span className="font-medium text-amber-700 shrink-0">形近/易混淆字：</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {data.confusables.map((cw, cIdx) => (
+                            <ClickableText
+                              key={cIdx}
+                              text={cw}
+                              onWordClick={handleWordClick}
+                              className="px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200/80 rounded-md font-mono text-[11px] hover:bg-amber-100"
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             );
@@ -449,10 +594,20 @@ const renderLevelBadge = (rawLevel: string) => {
         </div>
       </div>
 
+      {/* 設定彈窗 */}
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         onSaved={checkConfig}
+      />
+
+      {/* 本地字典秒查彈窗 */}
+      <QuickLookupModal
+        isOpen={isQuickOpen}
+        loading={quickLoading}
+        data={quickData}
+        onClose={() => setIsQuickOpen(false)}
+        onDeepAnalyze={triggerDeepAnalysisForWord}
       />
     </main>
   );
