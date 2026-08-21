@@ -8,7 +8,8 @@ export const WordAnalysisSchema = z.object({
 
   word: z.string().nullish().transform((v) => v || ""),
   phonetic: z.string().nullish().transform((v) => v || ""),
-  level: z.string().nullish().transform((v) => v || "未知"),
+  level: z.string().nullish().transform((v) => v || "7000單外"),
+  source: z.enum(["dict+ai", "ai-only"]).default("dict+ai"), // 標註資料來源
 
   meanings: z
     .array(
@@ -21,13 +22,12 @@ export const WordAnalysisSchema = z.object({
     .nullish()
     .transform((v) => v || []),
 
-  // 常用搭配詞 (Collocations)
   collocations: z
     .array(
       z.object({
-        phrase: z.string().describe("常用英文搭配詞組，如 abandon hope"),
-        meaning: z.string().describe("繁體中文語意，如 放棄希望"),
-        example: z.string().nullish().transform((v) => v || "").describe("極簡實用短句"),
+        phrase: z.string().describe("常用英文搭配詞組"),
+        meaning: z.string().describe("繁體中文語意"),
+        example: z.string().nullish().transform((v) => v || "").describe("實用短句"),
       })
     )
     .nullish()
@@ -55,7 +55,9 @@ export const WordAnalysisSchema = z.object({
     .nullish()
     .transform((v) => v || []),
 
+  // 在 synonyms 底下新增 confusables
   synonyms: z.array(z.string()).nullish().transform((v) => v || []),
+  confusables: z.array(z.string()).nullish().transform((v) => v || []).describe("形近或易混淆單字清單")
 });
 
 export const BatchWordAnalysisSchema = z.object({

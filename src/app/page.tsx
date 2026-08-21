@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { WordAnalysis } from "@/lib/schema";
 import SettingsModal from "@/components/SettingsModal";
 import { 
@@ -16,7 +16,8 @@ import {
   Sparkles,
   Layers,
   GraduationCap,
-  Languages
+  Languages,
+  Zap
 } from "lucide-react";
 
 export default function Home() {
@@ -56,7 +57,7 @@ export default function Home() {
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
+    if (!inputText.trim() || loading) return;
 
     setLoading(true);
     setError(null);
@@ -86,7 +87,11 @@ export default function Home() {
         throw new Error(json.error || "查詢失敗，請確認 API 設定或稍後再試");
       }
 
-      setCards(json);
+      if (Array.isArray(json)) {
+        setCards(json);
+      } else {
+        throw new Error("伺服器回傳了無效的資料格式");
+      }
     } catch (err: any) {
       setError(err.message || "發生未知錯誤");
     } finally {
@@ -95,7 +100,7 @@ export default function Home() {
   };
 
   const playAudio = (text: string) => {
-    if ("speechSynthesis" in window) {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = "en-US";
@@ -104,37 +109,63 @@ export default function Home() {
     }
   };
 
-  const renderLevelBadge = (level: string) => {
+const renderLevelBadge = (rawLevel: string) => {
     let colorClass = "bg-slate-100 text-slate-700 border-slate-200";
     let desc = "7000單外";
+    let displayLevel = "7000單外";
 
-    if (level === "Level 1" || level === "Level 2") {
-      colorClass = "bg-emerald-50 text-emerald-700 border-emerald-200";
-      desc = "國中基礎";
-    } else if (level === "Level 3" || level === "Level 4") {
-      colorClass = "bg-blue-50 text-blue-700 border-blue-200";
-      desc = "學測核心";
-    } else if (level === "Level 5" || level === "Level 6") {
-      colorClass = "bg-purple-50 text-purple-700 border-purple-200";
-      desc = "分科進階";
+    // 只比對 1 到 6 的大考分級數字，避免 7000 被誤抓
+    const match = rawLevel.match(/\b([1-6])\b/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      displayLevel = `Level ${num}`;
+
+      if (num === 1 || num === 2) {
+        colorClass = "bg-emerald-50 text-emerald-700 border-emerald-200";
+        desc = "國中基礎";
+      } else if (num === 3 || num === 4) {
+        colorClass = "bg-blue-50 text-blue-700 border-blue-200";
+        desc = "學測核心";
+      } else if (num === 5 || num === 6) {
+        colorClass = "bg-purple-50 text-purple-700 border-purple-200";
+        desc = "分科進階";
+      }
     }
 
     return (
       <div className={`flex items-center gap-1 px-2.5 py-0.5 text-xs font-bold border rounded-full ${colorClass}`}>
         <GraduationCap className="h-3.5 w-3.5" />
-        <span>{level}</span>
-        <span className="text-[10px] opacity-75">({desc})</span>
+        <span>{displayLevel}</span>
+        {displayLevel !== "7000單外" && (
+          <span className="text-[10px] opacity-75">({desc})</span>
+        )}
       </div>
     );
   };
 
-  // 判斷是否為中文查詢輸入
+  const renderSourceBadge = (source?: string) => {
+    if (source === "dict+ai") {
+      return (
+        <div className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold border rounded-full bg-amber-50 text-amber-700 border-amber-200">
+          <Zap className="h-3 w-3 text-amber-600" />
+          <span>字典加速</span>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold border rounded-full bg-indigo-50 text-indigo-700 border-indigo-200">
+        <Sparkles className="h-3 w-3 text-indigo-600" />
+        <span>AI 全解析</span>
+      </div>
+    );
+  };
+
   const isChineseInput = (original: string) => {
     return /[\u4e00-\u9fa5]/.test(original);
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 py-10 px-4 sm:px-6">
+    <main className="min-h-screen bg-slate-50 py-10 px-4 sm:px-6 font-sans">
       <div className="max-w-3xl mx-auto space-y-6">
         
         {/* Header */}
@@ -252,7 +283,7 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* 標題與學測分級標籤 */}
+                {/* 標題、發音、學測分級與來源標籤 */}
                 <div className="flex justify-between items-start border-b border-slate-100 pb-4">
                   <div>
                     <div className="flex items-center gap-3 flex-wrap">
@@ -260,6 +291,7 @@ export default function Home() {
                         {data.word}
                       </h2>
                       {renderLevelBadge(data.level)}
+                      {renderSourceBadge(data.source)}
                     </div>
                     <div className="flex items-center gap-2 mt-1.5 text-slate-600">
                       <span className="font-mono text-sm">{data.phonetic}</span>
@@ -372,25 +404,43 @@ export default function Home() {
                 )}
 
                 {/* 語境例句 */}
-                <section className="space-y-3">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                    語境例句
-                  </h3>
-                  <div className="space-y-2.5">
-                    {data.examples.map((ex, idx) => (
-                      <div key={idx} className="text-sm space-y-0.5 border-l-2 border-blue-500 pl-3 py-0.5">
-                        <p className="text-slate-900 font-medium">{ex.en}</p>
-                        <p className="text-slate-500 text-xs">{ex.zh}</p>
-                      </div>
-                    ))}
-                  </div>
-                </section>
+                {data.examples && data.examples.length > 0 && (
+                  <section className="space-y-3">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                      語境例句
+                    </h3>
+                    <div className="space-y-2.5">
+                      {data.examples.map((ex, idx) => (
+                        <div key={idx} className="text-sm space-y-0.5 border-l-2 border-blue-500 pl-3 py-0.5">
+                          <p className="text-slate-900 font-medium">{ex.en}</p>
+                          <p className="text-slate-500 text-xs">{ex.zh}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
 
                 {/* 同義詞 */}
                 {data.synonyms && data.synonyms.length > 0 && (
                   <div className="pt-3 border-t border-slate-100 flex items-center gap-2 text-xs text-slate-500">
                     <span className="font-medium text-slate-700">同義詞：</span>
                     <span>{data.synonyms.join(", ")}</span>
+                  </div>
+                )}
+                {/* 形近 / 易混淆字 */}
+                {data.confusables && data.confusables.length > 0 && (
+                  <div className="pt-2.5 border-t border-slate-100 flex items-center gap-2 text-xs text-slate-500">
+                    <span className="font-medium text-amber-700 shrink-0">形近/易混淆字：</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {data.confusables.map((cw, cIdx) => (
+                        <span
+                          key={cIdx}
+                          className="px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200/80 rounded-md font-mono text-[11px]"
+                        >
+                          {cw}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
