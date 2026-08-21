@@ -21,7 +21,7 @@ export const WordAnalysisSchema = z.object({
     .nullish()
     .transform((v) => v || []),
 
-  // 新增：常用搭配詞 (Collocations)
+  // 常用搭配詞 (Collocations)
   collocations: z
     .array(
       z.object({
@@ -63,3 +63,15 @@ export const BatchWordAnalysisSchema = z.object({
 });
 
 export type WordAnalysis = z.infer<typeof WordAnalysisSchema>;
+
+// Phase 2: Firestore 雲端字庫卡片型別 (含 SM-2 狀態)
+export interface SavedWordCard extends WordAnalysis {
+  id: string;
+  userId: string;
+  createdAt: number;
+  repetition: number;     // 連續正確複習次數
+  interval: number;       // 下次複習間隔 (天)
+  easeFactor: number;     // 難度因子 (預設 2.5)
+  nextReviewDate: number; // 下次複習時間戳記 (毫秒)
+  lastReviewedAt: number | null;
+}
