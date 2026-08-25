@@ -17,9 +17,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
-      - name: 安裝相依套件
-        run: npm install firebase-admin nodemailer
+      - name: 安裝專案相依套件
+        run: npm install
 
       - name: 執行到期檢查並寄送 Gmail
         env:
