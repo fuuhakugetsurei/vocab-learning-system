@@ -1,13 +1,16 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, getDocs } from "firebase/firestore";
+import nodemailer from "nodemailer";
 
-// 1. 讀取環境變數 (由 GitHub Actions Secret 或本機 .env 注入)
+// 讀取 GitHub Actions Secret 環境變數
 const FIREBASE_CONFIG_RAW = process.env.FIREBASE_CONFIG;
-const USER_ID = process.env.USER_ID; // 使用者的 Firebase UID
-const LINE_NOTIFY_TOKEN = process.env.LINE_NOTIFY_TOKEN;
+const USER_ID = process.env.USER_ID; // Firebase UID
+const GMAIL_USER = process.env.GMAIL_USER; // 你的 Gmail (例如 xxx@gmail.com)
+const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD; // 16 碼應用程式密碼
+const TO_EMAIL = process.env.TO_EMAIL || GMAIL_USER; // 預設寄給自己
 
-if (!FIREBASE_CONFIG_RAW || !USER_ID) {
-  console.error("❌ 缺少必要環境變數：FIREBASE_CONFIG 或 USER_ID");
+if (!FIREBASE_CONFIG_RAW || !USER_ID || !GMAIL_USER || !GMAIL_APP_PASSWORD) {
+  console.error("❌ 缺少必要環境變數：FIREBASE_CONFIG, USER_ID, GMAIL_USER 或 GMAIL_APP_PASSWORD");
   process.exit(1);
 }
 
@@ -29,7 +32,9 @@ async function checkAndNotify() {
     if (nextDate <= now) {
       dueWords.push({
         word: data.word,
+        phonetic: data.data?.phonetic || "",
         meaning: data.data?.meanings?.[0]?.primary || "暫無釋義",
+        pos: data.data?.meanings?.[0]?.pos || "釋義",
       });
     }
   });
@@ -37,41 +42,65 @@ async function checkAndNotify() {
   console.log(`📊 檢查完成：共有 ${dueWords.length} 個單字到達複習時間。`);
 
   if (dueWords.length === 0) {
-    console.log("✨ 今日無待複習單字，無需發送通知。");
+    console.log("✨ 今日無待複習單字，無需發送郵件。");
     return;
   }
 
-  // 2. 組裝通知訊息
-  const sampleWords = dueWords.slice(0, 5).map((w) => `• ${w.word}: ${w.meaning}`).join("\n");
-  const moreText = dueWords.length > 5 ? `\n...以及其他 ${dueWords.length - 5} 個單字` : "";
-  
-  const message = `\n🔔 【艾賓浩斯複習提醒】\n你今天有 ${dueWords.length} 個單字已到達記憶遺忘臨界點！\n\n${sampleWords}${moreText}\n\n👉 趕快開啟系統進行 SM-2 抽卡複習吧！`;
-
-  // 3. 發送 LINE Notify
-  if (LINE_NOTIFY_TOKEN) {
-    await sendLineNotify(LINE_NOTIFY_TOKEN, message);
-  }
+  await sendEmail(dueWords);
 }
 
-async function sendLineNotify(token, message) {
-  const params = new URLSearchParams();
-  params.append("message", message);
-
-  const res = await fetch("https://notify-api.line.me/api/notify", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/x-www-form-urlencoded",
+async function sendEmail(words) {
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: GMAIL_USER,
+      pass: GMAIL_APP_PASSWORD,
     },
-    body: params,
   });
 
-  if (res.ok) {
-    console.log("✅ LINE 通知發送成功！");
-  } else {
-    const text = await res.text();
-    console.error("❌ LINE 通知發送失敗:", text);
-  }
+  const wordItemsHtml = words
+    .slice(0, 10)
+    .map(
+      (w) => `
+      <li style="margin-bottom: 12px; border-bottom: 1px dashed #e2e8f0; padding-bottom: 8px;">
+        <strong style="color: #2563eb; font-size: 16px;">${w.word}</strong>
+        <span style="color: #64748b; font-size: 13px; font-family: monospace;">${w.phonetic ? `/${w.phonetic}/` : ""}</span>
+        <span style="background: #f1f5f9; color: #475569; font-size: 11px; font-weight: bold; padding: 2px 6px; border-radius: 4px; margin-left: 4px;">${w.pos}</span>
+        <div style="color: #1e293b; font-size: 14px; margin-top: 4px; font-weight: 500;">${w.meaning}</div>
+      </li>`
+    )
+    .join("");
+
+  const moreText =
+    words.length > 10
+      ? `<p style="color: #64748b; font-size: 13px; text-align: center;">...以及其他 ${words.length - 10} 個單字</p>`
+      : "";
+
+  const mailOptions = {
+    from: `"單字深度學習助手" <${GMAIL_USER}>`,
+    to: TO_EMAIL,
+    subject: `🔔 今日單字複習提醒：你有 ${words.length} 個單字到達遺忘臨界點！`,
+    html: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
+        <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">📚 艾賓浩斯間隔重複提醒</h2>
+        <p style="color: #475569; font-size: 14px; line-height: 1.6;">
+          根據 SM-2 演算法排程，你今天有 <strong style="color: #d97706; font-size: 16px;">${words.length}</strong> 個單字到達遺忘臨界點，快花 3 分鐘複習加深印象吧！
+        </p>
+        <div style="background-color: #f8fafc; border: 1px solid #f1f5f9; border-radius: 12px; padding: 16px; margin: 16px 0;">
+          <ul style="list-style-type: none; padding-left: 0; margin: 0;">
+            ${wordItemsHtml}
+          </ul>
+          ${moreText}
+        </div>
+        <p style="color: #94a3b8; font-size: 12px; text-align: center; margin-bottom: 0;">
+          及時複習是克服遺忘曲線最有效的方法 ⚡
+        </p>
+      </div>
+    `,
+  };
+
+  const info = await transporter.sendMail(mailOptions);
+  console.log("✅ Gmail 複習提醒發送成功！ID:", info.messageId);
 }
 
 checkAndNotify().catch((err) => {

@@ -4,7 +4,7 @@ on:
   schedule:
     # 每天 UTC 00:00 (台灣時間 08:00) 與 UTC 12:00 (台灣時間 20:00) 自動執行
     - cron: '0 0,12 * * *'
-  workflow_dispatch: # 支援在 GitHub 網頁手動點擊「Run workflow」測試
+  workflow_dispatch: # 支援手動點擊測試
 
 jobs:
   notify:
@@ -19,11 +19,12 @@ jobs:
           node-version: 20
 
       - name: 安裝相依套件
-        run: npm install firebase
+        run: npm install firebase nodemailer
 
-      - name: 執行到期檢查與推播
+      - name: 執行到期檢查並寄送 Gmail
         env:
           FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
           USER_ID: ${{ secrets.USER_ID }}
-          LINE_NOTIFY_TOKEN: ${{ secrets.LINE_NOTIFY_TOKEN }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         run: node scripts/daily-review-notifier.mjs
