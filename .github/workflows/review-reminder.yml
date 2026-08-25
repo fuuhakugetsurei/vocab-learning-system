@@ -19,11 +19,11 @@ jobs:
           node-version: 20
 
       - name: 安裝相依套件
-        run: npm install firebase nodemailer
+        run: npm install firebase-admin nodemailer
 
       - name: 執行到期檢查並寄送 Gmail
         env:
-          FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           USER_ID: ${{ secrets.USER_ID }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
