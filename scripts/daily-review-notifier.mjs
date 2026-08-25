@@ -1,27 +1,32 @@
-import { initializeApp } from "firebase/app";
-import { getFirestore, collection, getDocs } from "firebase/firestore";
+import { initializeApp, cert, getApps } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
 import nodemailer from "nodemailer";
 
-// 讀取 GitHub Actions Secret 環境變數
-const FIREBASE_CONFIG_RAW = process.env.FIREBASE_CONFIG;
+const SERVICE_ACCOUNT_RAW = process.env.FIREBASE_SERVICE_ACCOUNT;
 const USER_ID = process.env.USER_ID; // Firebase UID
-const GMAIL_USER = process.env.GMAIL_USER; // 你的 Gmail (例如 xxx@gmail.com)
-const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD; // 16 碼應用程式密碼
-const TO_EMAIL = process.env.TO_EMAIL || GMAIL_USER; // 預設寄給自己
+const GMAIL_USER = process.env.GMAIL_USER;
+const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD;
+const TO_EMAIL = process.env.TO_EMAIL || GMAIL_USER;
 
-if (!FIREBASE_CONFIG_RAW || !USER_ID || !GMAIL_USER || !GMAIL_APP_PASSWORD) {
-  console.error("❌ 缺少必要環境變數：FIREBASE_CONFIG, USER_ID, GMAIL_USER 或 GMAIL_APP_PASSWORD");
+if (!SERVICE_ACCOUNT_RAW || !USER_ID || !GMAIL_USER || !GMAIL_APP_PASSWORD) {
+  console.error("❌ 缺少必要環境變數：FIREBASE_SERVICE_ACCOUNT, USER_ID, GMAIL_USER 或 GMAIL_APP_PASSWORD");
   process.exit(1);
 }
 
-const firebaseConfig = JSON.parse(FIREBASE_CONFIG_RAW);
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+const serviceAccount = JSON.parse(SERVICE_ACCOUNT_RAW);
+
+if (getApps().length === 0) {
+  initializeApp({
+    credential: cert(serviceAccount),
+  });
+}
+
+const db = getFirestore();
 
 async function checkAndNotify() {
-  console.log(`🔍 正在檢查使用者 [${USER_ID}] 的到期單字...`);
-  const colRef = collection(db, "users", USER_ID, "vocabularies");
-  const snapshot = await getDocs(colRef);
+  console.log(`🔍 正在使用 Admin SDK 檢查使用者 [${USER_ID}] 的到期單字...`);
+  const colRef = db.collection("users").doc(USER_ID).collection("vocabularies");
+  const snapshot = await colRef.get();
 
   const now = Date.now();
   const dueWords = [];
