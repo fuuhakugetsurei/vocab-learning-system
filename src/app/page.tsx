@@ -8,6 +8,7 @@ import ClickableText from "@/components/ClickableText";
 import QuickLookupModal, { QuickLookupData } from "@/components/QuickLookupModal";
 import { AuthBar } from "@/components/AuthBar";
 import { ReviewModal } from "@/components/ReviewModal";
+import { Vocab7000Modal } from "@/components/Vocab7000Modal";
 import { filterDueCards } from "@/lib/srs";
 import { 
   saveWordCard, 
@@ -62,6 +63,9 @@ export default function Home() {
 
   // 複習模式狀態
   const [isReviewOpen, setIsReviewOpen] = useState(false);
+
+  // 7000 單字庫刷題模式狀態
+  const [is7000Open, setIs7000Open] = useState(false);
 
   const checkConfig = () => {
     const saved = localStorage.getItem("vocab_api_config_v2");
@@ -359,6 +363,17 @@ export default function Home() {
 
           {/* 右側操作區 (強制單行、不換行) */}
           <div className="flex items-center gap-2 shrink-0">
+            {/* 7000 單字庫入口按鈕 */}
+            <button
+              type="button"
+              onClick={() => setIs7000Open(true)}
+              className="px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 shadow-xs bg-white border border-slate-200 text-slate-700 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600 whitespace-nowrap"
+            >
+              <BookOpen className="h-3.5 w-3.5 text-blue-600" />
+              <span>7000 單</span>
+            </button>
+
+            {/* SRS 複習入口按鈕 */}
             {user && savedCards.length > 0 && (
               <button
                 type="button"
@@ -783,6 +798,15 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* 7000 單字庫翻卡學習彈窗 */}
+      <Vocab7000Modal
+        isOpen={is7000Open}
+        onClose={() => setIs7000Open(false)}
+        user={user}
+        onCardSaved={refreshUserSavedWords}
+        onDeepAnalyze={triggerDeepAnalysisForWord}
+      />
 
       {/* SRS 智慧複習彈窗 */}
       <ReviewModal
