@@ -1,10 +1,19 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { WordAnalysis } from "@/lib/schema";
+import React, { useState, useEffect, useCallback } from "react";
+import type { User } from "firebase/auth";
+import { WordAnalysis, SavedWordCard } from "@/lib/schema";
 import SettingsModal from "@/components/SettingsModal";
 import ClickableText from "@/components/ClickableText";
 import QuickLookupModal, { QuickLookupData } from "@/components/QuickLookupModal";
+import { AuthBar } from "@/components/AuthBar";
+import { ReviewModal } from "@/components/ReviewModal";
+import { filterDueCards } from "@/lib/srs";
+import { 
+  saveWordCard, 
+  removeWordCard, 
+  fetchUserVocabularies 
+} from "@/lib/firebase";
 import { 
   Search, 
   Volume2, 
@@ -14,13 +23,16 @@ import {
   AlertTriangle, 
   XCircle, 
   BookmarkPlus,
-  Settings,
+  BookmarkCheck,
   Sparkles,
   Layers,
   GraduationCap,
   Languages,
   Zap,
-  Loader2
+  Loader2,
+  Trash2,
+  Flame,
+  X
 } from "lucide-react";
 
 // 擴展型別：支援進行中載入卡片
@@ -32,6 +44,8 @@ export default function Home() {
   const [cards, setCards] = useState<DisplayCard[]>([]);
   const [error, setError] = useState<string | null>(null);
   
+  // 使用者與設定狀態
+  const [user, setUser] = useState<User | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [currentConfigName, setCurrentConfigName] = useState<string>("Gemini (系統預設)");
 
@@ -39,6 +53,15 @@ export default function Home() {
   const [isQuickOpen, setIsQuickOpen] = useState(false);
   const [quickLoading, setQuickLoading] = useState(false);
   const [quickData, setQuickData] = useState<QuickLookupData | null>(null);
+
+  // 雲端單字庫狀態
+  const [savedWordsSet, setSavedWordsSet] = useState<Set<string>>(new Set());
+  const [isSavedModalOpen, setIsSavedModalOpen] = useState(false);
+  const [savedCards, setSavedCards] = useState<SavedWordCard[]>([]);
+  const [loadingSaved, setLoadingSaved] = useState(false);
+
+  // 複習模式狀態
+  const [isReviewOpen, setIsReviewOpen] = useState(false);
 
   const checkConfig = () => {
     const saved = localStorage.getItem("vocab_api_config_v2");
@@ -62,11 +85,34 @@ export default function Home() {
     }
   };
 
+  // 載入使用者已收藏的單字清單 (集合)
+  const refreshUserSavedWords = useCallback(async () => {
+    if (!user) {
+      setSavedWordsSet(new Set());
+      setSavedCards([]);
+      return;
+    }
+    try {
+      setLoadingSaved(true);
+      const list = await fetchUserVocabularies(user);
+      setSavedCards(list);
+      setSavedWordsSet(new Set(list.map((c) => c.word.toLowerCase())));
+    } catch (err) {
+      console.error("載入雲端單字庫失敗:", err);
+    } finally {
+      setLoadingSaved(false);
+    }
+  }, [user]);
+
   useEffect(() => {
     checkConfig();
   }, []);
 
-  // 1. 點擊任何單字時觸發本地秒查
+  useEffect(() => {
+    refreshUserSavedWords();
+  }, [refreshUserSavedWords]);
+
+  // 點擊任何單字時觸發本地秒查
   const handleWordClick = async (word: string) => {
     const clean = word.replace(/^[^a-zA-Z]+|[^a-zA-Z]+$/g, "");
     if (!clean) return;
@@ -86,11 +132,8 @@ export default function Home() {
     }
   };
 
-  // 2. 深度非同步解析單一單字（漸進式載入）
+  // 深度非同步解析單一單字（漸進式載入）
   const triggerDeepAnalysisForWord = async (wordToAnalyze: string) => {
-    const tempId = `async-${Date.now()}`;
-    
-    // 先在頂部塞入一張「載入中骨架卡」
     const placeholderCard: DisplayCard = {
       originalWord: wordToAnalyze,
       isValid: true,
@@ -99,7 +142,7 @@ export default function Home() {
       word: wordToAnalyze,
       phonetic: quickData?.phonetic || "",
       level: quickData?.level || "分析中...",
-      source: "dict+ai", // 👈 補上 source
+      source: "dict+ai",
       meanings: quickData?.translation 
         ? [{ pos: "釋義", primary: quickData.translation.split("；")[0] || "", secondary: [] }] 
         : [],
@@ -108,7 +151,7 @@ export default function Home() {
       mnemonics: "",
       examples: [],
       synonyms: [],
-      confusables: [], // 👈 補上 confusables
+      confusables: [],
       isAsyncLoading: true,
     };
 
@@ -139,15 +182,15 @@ export default function Home() {
 
       const enrichedCard = Array.isArray(json) ? json[0] : json;
 
-      // 用後端回傳的完整深度資料覆寫該骨架卡片
       setCards((prev) =>
         prev.map((c) => (c.originalWord === wordToAnalyze && c.isAsyncLoading ? enrichedCard : c))
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "深度生成失敗";
       setCards((prev) =>
         prev.map((c) =>
           c.originalWord === wordToAnalyze && c.isAsyncLoading
-            ? { ...c, isAsyncLoading: false, errorMessage: err.message || "深度生成失敗", isValid: false }
+            ? { ...c, isAsyncLoading: false, errorMessage: msg, isValid: false }
             : c
         )
       );
@@ -191,10 +234,40 @@ export default function Home() {
       } else {
         throw new Error("伺服器回傳了無效的資料格式");
       }
-    } catch (err: any) {
-      setError(err.message || "發生未知錯誤");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "發生未知錯誤";
+      setError(msg);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 收藏 / 取消收藏切換
+  const handleToggleSave = async (data: WordAnalysis) => {
+    if (!user) {
+      alert("請先登入 Google 帳號以啟用雲端字庫同步！");
+      return;
+    }
+    const wordKey = data.word.toLowerCase();
+    const isCurrentlySaved = savedWordsSet.has(wordKey);
+
+    try {
+      if (isCurrentlySaved) {
+        await removeWordCard(user, data.word);
+        setSavedWordsSet((prev) => {
+          const next = new Set(prev);
+          next.delete(wordKey);
+          return next;
+        });
+        setSavedCards((prev) => prev.filter((c) => c.id !== wordKey));
+      } else {
+        await saveWordCard(user, data);
+        setSavedWordsSet((prev) => new Set(prev).add(wordKey));
+        await refreshUserSavedWords();
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "操作失敗";
+      alert(`雲端同步失敗: ${msg}`);
     }
   };
 
@@ -262,32 +335,56 @@ export default function Home() {
     return /[\u4e00-\u9fa5]/.test(original);
   };
 
+  // 篩選今日到期需複習的單字
+  const dueCards = filterDueCards(savedCards);
+
   return (
     <main className="min-h-screen bg-slate-50 py-10 px-4 sm:px-6 font-sans">
       <div className="max-w-3xl mx-auto space-y-6">
         
         {/* Header */}
-        <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="space-y-1">
+        <header className="flex items-center justify-between gap-4 bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-sm">
+          {/* 左側標題與資訊 */}
+          <div className="space-y-1 min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <Sparkles className="h-6 w-6 text-blue-600" />
-              <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+              <Sparkles className="h-6 w-6 text-blue-600 shrink-0" />
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight truncate">
                 單字深度學習系統
               </h1>
             </div>
-            <p className="text-slate-500 text-xs">
-              支援：<span className="font-semibold text-slate-700">中英雙向查詢、點擊單字快查、7000 單分級</span> ｜ 引擎：<span className="font-mono font-semibold text-blue-600">{currentConfigName}</span>
+            <p className="text-slate-500 text-xs truncate">
+              <span className="hidden sm:inline">支援：</span>中英雙向、點擊快查、7000 單 ｜ 引擎：<span className="font-mono font-semibold text-blue-600">{currentConfigName}</span>
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setIsSettingsOpen(true)}
-            className="self-start sm:self-auto px-4 py-2 text-slate-700 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 border border-slate-200 rounded-xl transition shadow-sm flex items-center gap-2 text-xs font-semibold"
-          >
-            <Settings className="h-4 w-4" />
-            <span>自訂 API / 模型</span>
-          </button>
+          {/* 右側操作區 (強制單行、不換行) */}
+          <div className="flex items-center gap-2 shrink-0">
+            {user && savedCards.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setIsReviewOpen(true)}
+                className={`px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 shadow-xs whitespace-nowrap ${
+                  dueCards.length > 0
+                    ? "bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/20 animate-pulse"
+                    : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300"
+                }`}
+              >
+                <Flame className={`h-3.5 w-3.5 ${dueCards.length > 0 ? "text-white" : "text-amber-500"}`} />
+                <span>
+                  {dueCards.length > 0
+                    ? `今日複習 (${dueCards.length})`
+                    : `複習 (${savedCards.length})`}
+                </span>
+              </button>
+            )}
+
+            <AuthBar
+              user={user}
+              setUser={setUser}
+              onOpenSettings={() => setIsSettingsOpen(true)}
+              onOpenSavedModal={() => setIsSavedModalOpen(true)}
+            />
+          </div>
         </header>
 
         {/* 搜尋欄 */}
@@ -356,6 +453,8 @@ export default function Home() {
               );
             }
 
+            const isSaved = savedWordsSet.has(data.word.toLowerCase());
+
             return (
               <div
                 key={`${data.word}-${index}`}
@@ -418,13 +517,27 @@ export default function Home() {
                     </div>
                   </div>
 
+                  {/* 收藏按鈕 */}
                   <button
                     type="button"
-                    onClick={() => alert(`已觸發收藏「${data.word}」，Phase 2 將寫入 Firestore`)}
-                    className="px-3 py-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition border border-slate-200 flex items-center gap-1.5 text-xs font-semibold"
+                    onClick={() => handleToggleSave(data)}
+                    className={`px-3.5 py-1.5 rounded-xl transition border flex items-center gap-1.5 text-xs font-semibold shadow-xs ${
+                      isSaved
+                        ? "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100"
+                        : "bg-slate-50 border-slate-200 text-slate-600 hover:text-blue-600 hover:bg-blue-50"
+                    }`}
                   >
-                    <BookmarkPlus className="h-4 w-4" />
-                    <span>收藏</span>
+                    {isSaved ? (
+                      <>
+                        <BookmarkCheck className="h-4 w-4 text-amber-600" />
+                        <span>已收藏</span>
+                      </>
+                    ) : (
+                      <>
+                        <BookmarkPlus className="h-4 w-4" />
+                        <span>收藏單字</span>
+                      </>
+                    )}
                   </button>
                 </div>
 
@@ -477,7 +590,7 @@ export default function Home() {
                               </div>
                               {col.example && (
                                 <p className="text-[11px] text-slate-500 italic border-t border-slate-100 pt-1">
-                                  "<ClickableText text={col.example} onWordClick={handleWordClick} />"
+                                  &quot;<ClickableText text={col.example} onWordClick={handleWordClick} />&quot;
                                 </p>
                               )}
                             </div>
@@ -593,6 +706,92 @@ export default function Home() {
           })}
         </div>
       </div>
+
+      {/* 雲端字庫清單彈窗 */}
+      {isSavedModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] shadow-2xl border border-slate-200 flex flex-col">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <BookmarkCheck className="h-5 w-5 text-indigo-600" />
+                <h2 className="text-lg font-bold text-slate-900">
+                  我的雲端字庫 ({savedCards.length})
+                </h2>
+              </div>
+              <button
+                onClick={() => setIsSavedModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 flex-1 overflow-y-auto space-y-3">
+              {loadingSaved ? (
+                <div className="text-center py-10 text-slate-400 flex flex-col items-center gap-2">
+                  <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
+                  <span className="text-xs">讀取雲端單字中...</span>
+                </div>
+              ) : savedCards.length === 0 ? (
+                <div className="text-center py-12 text-slate-400 text-sm">
+                  目前尚未收藏任何單字卡。
+                </div>
+              ) : (
+                savedCards.map((sc) => (
+                  <div
+                    key={sc.id}
+                    className="p-4 rounded-xl border border-slate-200 hover:border-indigo-300 transition flex items-center justify-between bg-slate-50/50 hover:bg-white"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-900 text-base">{sc.word}</span>
+                        <span className="text-xs text-slate-500 font-mono">{sc.data.phonetic}</span>
+                        {renderLevelBadge(sc.data.level)}
+                      </div>
+                      <p className="text-xs text-slate-600">
+                        {sc.data.meanings.map((m) => `${m.pos} ${m.primary}`).join(" ； ")}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setCards([sc.data]);
+                          setIsSavedModalOpen(false);
+                        }}
+                        className="px-3 py-1 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-xs font-semibold transition"
+                      >
+                        檢視詳情
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (user && confirm(`確定要移除「${sc.word}」嗎？`)) {
+                            await removeWordCard(user, sc.word);
+                            await refreshUserSavedWords();
+                          }
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition"
+                        title="從雲端刪除"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SRS 智慧複習彈窗 */}
+      <ReviewModal
+        isOpen={isReviewOpen}
+        onClose={() => setIsReviewOpen(false)}
+        dueCards={dueCards.length > 0 ? dueCards : savedCards}
+        user={user}
+        onReviewFinished={refreshUserSavedWords}
+      />
 
       {/* 設定彈窗 */}
       <SettingsModal

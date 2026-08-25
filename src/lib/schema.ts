@@ -66,14 +66,21 @@ export const BatchWordAnalysisSchema = z.object({
 
 export type WordAnalysis = z.infer<typeof WordAnalysisSchema>;
 
-// Phase 2: Firestore 雲端字庫卡片型別 (含 SM-2 狀態)
-export interface SavedWordCard extends WordAnalysis {
-  id: string;
-  userId: string;
-  createdAt: number;
-  repetition: number;     // 連續正確複習次數
-  interval: number;       // 下次複習間隔 (天)
-  easeFactor: number;     // 難度因子 (預設 2.5)
-  nextReviewDate: number; // 下次複習時間戳記 (毫秒)
-  lastReviewedAt: number | null;
+// --- 新增：雲端單字卡與 SRS 複習型別 ---
+
+export interface SRSRecord {
+  interval: number;       // 當前間隔天數 (I_n)
+  repetition: number;     // 連續正確次數 (n)
+  easeFactor: number;     // 難度因子 (EF, 預設 2.5)
+  nextReviewDate: string; // 下次複習時間 (ISO 8601 字串)
+  lastReviewDate?: string;// 上次複習時間 (ISO 8601 字串)
+}
+
+export interface SavedWordCard {
+  id: string;             // 單字 (小寫作為 Firestore Document ID)
+  word: string;
+  data: WordAnalysis;     // 完整的深度解析資料
+  savedAt: string;        // 收藏時間 (ISO 8601 字串)
+  srs: SRSRecord;         // SRS 複習狀態
+  tags?: string[];        // 標籤 (預設包含 CEEC 等級)
 }

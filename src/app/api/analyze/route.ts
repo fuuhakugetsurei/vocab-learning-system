@@ -28,16 +28,20 @@ function parseLocalTranslationToMeanings(translation: string) {
     .replace(/\r\n|\r|\n/g, '\n')
     .trim();
 
-  // 2. 匹配所有常見詞性標記（如 vt. / vi. / v. / n. / adj. / adv. / prep. / conj. / pron. 等）
-  // 支援出現在行首、換行後、空格後或分號後
-  const posRegex = /(?:^|\n|；|;|\s)(vt|vi|v|n|adj|adv|prep|conj|pron|art|num|int|abbr|pl)\.\s*/gi;
+  // 2. 匹配所有常見詞性標記（加入 a. / ad. 以及中括號領域標籤如 [計] 等）
+  const posRegex = /(?:^|\n|；|;|\s)(vt|vi|v|n|adj|adv|a|ad|prep|conj|pron|art|num|int|abbr|pl|\[[^\]]+\])\.\s*/gi;
 
   const matches: { pos: string; index: number; length: number }[] = [];
   let m: RegExpExecArray | null;
 
   while ((m = posRegex.exec(cleanStr)) !== null) {
+    let rawPos = m[1].trim();
+    // 詞性正規化: a. -> a., adj. -> a., ad. -> adv.
+    if (rawPos.toLowerCase() === 'adj') rawPos = 'a';
+    if (rawPos.toLowerCase() === 'ad') rawPos = 'adv';
+    
     matches.push({
-      pos: `${m[1].toLowerCase()}.`,
+      pos: rawPos.startsWith('[') ? rawPos : `${rawPos.toLowerCase()}.`,
       index: m.index,
       length: m[0].length,
     });
@@ -81,6 +85,7 @@ function parseLocalTranslationToMeanings(translation: string) {
 
   return results.length > 0 ? results : [{ pos: 'n.', primary: translation, secondary: [] }];
 }
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -155,7 +160,7 @@ export async function POST(req: NextRequest) {
 
 【重要準則】
 1. 所有中文說明（釋義、詞性說明、字根解析、搭配詞釋義、記憶技巧、例句翻譯）一律嚴格使用台灣繁體中文，禁止使用簡體字。
-2. 輸出必須為純 JSON 陣列格式 [...]，層禁止任何額外文字或 Markdown 標籤。
+2. 輸出必須為純 JSON 陣列格式 [...]，禁止任何額外文字或 Markdown 標籤。
 3. 若輸入是片語或字典無資料，務必在 meanings 中填寫詞性 (pos: 如 "phr." 或 "v.") 與主要繁中釋義 (primary)。
 4. 若偵測到使用者拼錯單字或輸入底線分隔，請將 isCorrected 設為 true，並於 word 填入標準英文單字/片語。
 5. 請提供 2~4 個外型或發音極為相似的「形近/易混淆字」(confusables)，例如 cap 應列出 ["cop", "cope", "cape"]。
@@ -279,15 +284,14 @@ export async function POST(req: NextRequest) {
       throw new Error(`無法解析模型回傳的 JSON: ${cleanedJson.substring(0, 100)}...`);
     }
 
-   // 7. 本地字典與 AI 結果深度合併
+    // 7. 本地字典與 AI 結果深度合併
     const mergedResults: WordAnalysis[] = wordsWithLocalInfo.map((info, idx) => {
       const aiData = parsed[idx] || {};
       const targetWord = aiData.word || info.originalWord;
-      const ceecLevelNum = lookupCEECLevel(targetWord);
+      const ceecLevelStr = lookupCEECLevel(targetWord);
 
       const phonetic = info.localData?.phonetic || aiData.phonetic || '';
 
-      // 👇 就是加在這裡！取代原本的 meanings 宣告 👇
       let meanings = info.localData
         ? parseLocalTranslationToMeanings(info.localData.translation)
         : (aiData.meanings || []);
@@ -295,7 +299,6 @@ export async function POST(req: NextRequest) {
       if (!meanings || meanings.length === 0) {
         meanings = [{ pos: '釋義', primary: '暫無詳細釋義', secondary: [] }];
       }
-      // 👆 ----------------------------------------- 👆
 
       const isCorrected =
         typeof aiData.isCorrected === 'boolean'
@@ -309,7 +312,7 @@ export async function POST(req: NextRequest) {
         errorMessage: aiData.errorMessage || '',
         word: targetWord,
         phonetic,
-        level: ceecLevelNum ? `Level ${ceecLevelNum}` : '7000單外',
+        level: ceecLevelStr || '7000單外', // 直接使用 clean 字串，不重複加 Level
         source: info.localData ? 'dict+ai' : 'ai-only',
         meanings,
         collocations: aiData.collocations || [],
@@ -322,9 +325,10 @@ export async function POST(req: NextRequest) {
         mnemonics: aiData.mnemonics || '',
         examples: aiData.examples || [],
         synonyms: aiData.synonyms || [],
-        confusables: aiData.confusables || [], // 👈 補上這行
+        confusables: aiData.confusables || [],
       };
     });
+
     // 8. 最終 Zod Schema 嚴格型別校驗
     const ArraySchema = z.array(WordAnalysisSchema);
     const validation = ArraySchema.safeParse(mergedResults);

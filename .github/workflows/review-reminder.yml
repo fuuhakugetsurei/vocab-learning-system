@@ -1,0 +1,29 @@
+name: Daily Vocab Review Reminder
+
+on:
+  schedule:
+    # 每天 UTC 00:00 (台灣時間 08:00) 與 UTC 12:00 (台灣時間 20:00) 自動執行
+    - cron: '0 0,12 * * *'
+  workflow_dispatch: # 支援在 GitHub 網頁手動點擊「Run workflow」測試
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下載專案原始碼
+        uses: actions/checkout@v4
+
+      - name: 設定 Node.js 環境
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 安裝相依套件
+        run: npm install firebase
+
+      - name: 執行到期檢查與推播
+        env:
+          FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
+          USER_ID: ${{ secrets.USER_ID }}
+          LINE_NOTIFY_TOKEN: ${{ secrets.LINE_NOTIFY_TOKEN }}
+        run: node scripts/daily-review-notifier.mjs
