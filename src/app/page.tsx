@@ -346,24 +346,25 @@ export default function Home() {
     <main className="min-h-screen bg-slate-50 py-10 px-4 sm:px-6 font-sans">
       <div className="max-w-3xl mx-auto space-y-6">
         
-        {/* Header */}
-        <header className="flex items-center justify-between gap-4 bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-sm">
-          {/* 左側標題與資訊 */}
-          <div className="space-y-1 min-w-0 flex-1">
+{/* Header (手機版雙層自適應，電腦版單行) */}
+        <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-sm">
+          {/* 上半部：標題與副標題 */}
+          <div className="space-y-1 min-w-0">
             <div className="flex items-center gap-2">
-              <Sparkles className="h-6 w-6 text-blue-600 shrink-0" />
-              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight truncate">
+              <Sparkles className="h-5 w-5 sm:h-6 sm:w-6 text-blue-600 shrink-0" />
+              <h1 className="text-lg sm:text-2xl font-bold text-slate-900 tracking-tight">
                 單字深度學習系統
               </h1>
             </div>
-            <p className="text-slate-500 text-xs truncate">
-              <span className="hidden sm:inline">支援：</span>中英雙向、點擊快查、7000 單 ｜ 引擎：<span className="font-mono font-semibold text-blue-600">{currentConfigName}</span>
+            <p className="text-slate-500 text-[11px] sm:text-xs">
+              <span className="hidden sm:inline">支援：中英雙向、點擊快查、7000 單 ｜ </span>引擎：
+              <span className="font-mono font-semibold text-blue-600">{currentConfigName}</span>
             </p>
           </div>
 
-          {/* 右側操作區 (強制單行、不換行) */}
-          <div className="flex items-center gap-2 shrink-0">
-            {/* 7000 單字庫入口按鈕 */}
+          {/* 下半部：操作按鈕群 (手機版自動橫排填滿，不擠壓標題) */}
+          <div className="flex items-center gap-2 shrink-0 flex-wrap sm:flex-nowrap pt-2 sm:pt-0 border-t border-slate-100 sm:border-t-0">
+            {/* 7000 單庫按鈕 */}
             <button
               type="button"
               onClick={() => setIs7000Open(true)}
@@ -373,7 +374,7 @@ export default function Home() {
               <span>7000 單</span>
             </button>
 
-            {/* SRS 複習入口按鈕 */}
+            {/* SRS 複習按鈕 */}
             {user && savedCards.length > 0 && (
               <button
                 type="button"
