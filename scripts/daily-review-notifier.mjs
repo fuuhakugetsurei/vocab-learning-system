@@ -3,13 +3,11 @@ import { getFirestore } from "firebase-admin/firestore";
 import nodemailer from "nodemailer";
 
 const SERVICE_ACCOUNT_RAW = process.env.FIREBASE_SERVICE_ACCOUNT;
-const USER_ID = process.env.USER_ID; // Firebase UID
 const GMAIL_USER = process.env.GMAIL_USER;
 const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD;
-const TO_EMAIL = process.env.TO_EMAIL || GMAIL_USER;
 
-if (!SERVICE_ACCOUNT_RAW || !USER_ID || !GMAIL_USER || !GMAIL_APP_PASSWORD) {
-  console.error("❌ 缺少必要環境變數：FIREBASE_SERVICE_ACCOUNT, USER_ID, GMAIL_USER 或 GMAIL_APP_PASSWORD");
+if (!SERVICE_ACCOUNT_RAW || !GMAIL_USER || !GMAIL_APP_PASSWORD) {
+  console.error("❌ 缺少必要環境變數：FIREBASE_SERVICE_ACCOUNT, GMAIL_USER 或 GMAIL_APP_PASSWORD");
   process.exit(1);
 }
 
@@ -23,46 +21,15 @@ if (getApps().length === 0) {
 
 const db = getFirestore();
 
-async function checkAndNotify() {
-  console.log(`🔍 正在使用 Admin SDK 檢查使用者 [${USER_ID}] 的到期單字...`);
-  const colRef = db.collection("users").doc(USER_ID).collection("vocabularies");
-  const snapshot = await colRef.get();
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: GMAIL_USER,
+    pass: GMAIL_APP_PASSWORD,
+  },
+});
 
-  const now = Date.now();
-  const dueWords = [];
-
-  snapshot.forEach((doc) => {
-    const data = doc.data();
-    const nextDate = data.srs?.nextReviewDate ? new Date(data.srs.nextReviewDate).getTime() : 0;
-    if (nextDate <= now) {
-      dueWords.push({
-        word: data.word,
-        phonetic: data.data?.phonetic || "",
-        meaning: data.data?.meanings?.[0]?.primary || "暫無釋義",
-        pos: data.data?.meanings?.[0]?.pos || "釋義",
-      });
-    }
-  });
-
-  console.log(`📊 檢查完成：共有 ${dueWords.length} 個單字到達複習時間。`);
-
-  if (dueWords.length === 0) {
-    console.log("✨ 今日無待複習單字，無需發送郵件。");
-    return;
-  }
-
-  await sendEmail(dueWords);
-}
-
-async function sendEmail(words) {
-  const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: GMAIL_USER,
-      pass: GMAIL_APP_PASSWORD,
-    },
-  });
-
+async function sendEmailToUser(toEmail, words) {
   const wordItemsHtml = words
     .slice(0, 10)
     .map(
@@ -83,7 +50,7 @@ async function sendEmail(words) {
 
   const mailOptions = {
     from: `"單字深度學習助手" <${GMAIL_USER}>`,
-    to: TO_EMAIL,
+    to: toEmail,
     subject: `🔔 今日單字複習提醒：你有 ${words.length} 個單字到達遺忘臨界點！`,
     html: `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
@@ -105,10 +72,74 @@ async function sendEmail(words) {
   };
 
   const info = await transporter.sendMail(mailOptions);
-  console.log("✅ Gmail 複習提醒發送成功！ID:", info.messageId);
+  console.log(`✉️ 成功寄送給 [${toEmail}]，Message ID: ${info.messageId}`);
 }
 
-checkAndNotify().catch((err) => {
+async function notifyAllUsers() {
+  console.log("🔍 開始掃描全體使用者的待複習單字...");
+  const usersSnapshot = await db.collection("users").get();
+
+  if (usersSnapshot.empty) {
+    console.log("⚠️ 資料庫中無任何使用者。");
+    return;
+  }
+
+  const now = Date.now();
+  let totalNotified = 0;
+
+  for (const userDoc of usersSnapshot.docs) {
+    const userData = userDoc.data();
+    const userId = userDoc.id;
+    const userEmail = userData.email;
+    const enableReminder = userData.enableReminder !== false;
+
+    if (!userEmail) {
+      console.log(`⏩ 使用者 [${userId}] 無 Email 欄位，略過。`);
+      continue;
+    }
+
+    if (!enableReminder) {
+      console.log(`⏩ 使用者 [${userEmail}] 已關閉提醒，略過。`);
+      continue;
+    }
+
+    const vocabSnapshot = await db
+      .collection("users")
+      .doc(userId)
+      .collection("vocabularies")
+      .get();
+
+    const dueWords = [];
+    vocabSnapshot.forEach((doc) => {
+      const card = doc.data();
+      const nextDate = card.srs?.nextReviewDate ? new Date(card.srs.nextReviewDate).getTime() : 0;
+      if (nextDate <= now) {
+        dueWords.push({
+          word: card.word,
+          phonetic: card.data?.phonetic || "",
+          meaning: card.data?.meanings?.[0]?.primary || "暫無釋義",
+          pos: card.data?.meanings?.[0]?.pos || "釋義",
+        });
+      }
+    });
+
+    if (dueWords.length > 0) {
+      console.log(`📊 使用者 [${userEmail}] 有 ${dueWords.length} 個待複習單字，準備發信...`);
+      try {
+        await sendEmailToUser(userEmail, dueWords);
+        totalNotified++;
+      } catch (err) {
+        console.error(`❌ 發送給 [${userEmail}] 失敗:`, err.message);
+      }
+    } else {
+      console.log(`✨ 使用者 [${userEmail}] 今日無待複習單字。`);
+    }
+  }
+
+  console.log(`🏁 掃描完成，共向 ${totalNotified} 位使用者發送了複習提醒信。`);
+}
+
+notifyAllUsers().catch((err) => {
   console.error("執行異常:", err);
   process.exit(1);
 });

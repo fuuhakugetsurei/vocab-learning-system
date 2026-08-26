@@ -22,75 +22,75 @@ import {
 } from "firebase/firestore";
 import { WordAnalysis, SavedWordCard, SRSRecord } from "./schema";
 
-const STORAGE_KEY = "user_firebase_config";
+const defaultFirebaseConfig: FirebaseOptions = {
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+};
 
-export function getStoredFirebaseConfig(): FirebaseOptions | null {
-  if (typeof window === "undefined") return null;
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as FirebaseOptions;
-  } catch {
-    return null;
-  }
-}
-
-export function saveFirebaseConfig(config: FirebaseOptions): void {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-}
-
-export function removeFirebaseConfig(): void {
-  if (typeof window === "undefined") return;
-  localStorage.removeItem(STORAGE_KEY);
-}
-
-// 取得或動態初始化 Firebase App
 export function getFirebaseInstance(): { app: FirebaseApp; auth: Auth; db: Firestore } | null {
-  const config = getStoredFirebaseConfig();
-  if (!config || !config.apiKey || !config.projectId) {
+  if (!defaultFirebaseConfig.apiKey || !defaultFirebaseConfig.projectId) {
+    console.warn("⚠️ Firebase 環境變數未配置完整");
     return null;
   }
 
-  let app: FirebaseApp;
-  if (getApps().length === 0) {
-    app = initializeApp(config);
-  } else {
-    app = getApp();
-  }
-
+  const app: FirebaseApp = getApps().length === 0 ? initializeApp(defaultFirebaseConfig) : getApp();
   const auth = getAuth(app);
   const db = getFirestore(app);
   return { app, auth, db };
 }
 
-// Google 登入
+// 同步登入使用者的 Profile，確保後端排程能抓到寄件信箱
+export async function syncUserProfile(user: User): Promise<void> {
+  const instance = getFirebaseInstance();
+  if (!instance) return;
+
+  const userDocRef = doc(instance.db, "users", user.uid);
+  await setDoc(
+    userDocRef,
+    {
+      uid: user.uid,
+      email: user.email || "",
+      displayName: user.displayName || "",
+      lastLoginAt: new Date().toISOString(),
+      enableReminder: true,
+    },
+    { merge: true }
+  );
+}
+
 export async function signInWithGoogle(): Promise<User> {
   const instance = getFirebaseInstance();
-  if (!instance) throw new Error("請先在設定中填入 Firebase 配置！");
+  if (!instance) throw new Error("Firebase 尚未正確初始化，請檢查環境變數！");
   const provider = new GoogleAuthProvider();
   const result = await signInWithPopup(instance.auth, provider);
+  await syncUserProfile(result.user);
   return result.user;
 }
 
-// 登出
 export async function signOutUser(): Promise<void> {
   const instance = getFirebaseInstance();
   if (!instance) return;
   await fbSignOut(instance.auth);
 }
 
-// 監聽登入狀態變化
 export function subscribeAuthState(callback: (user: User | null) => void): () => void {
   const instance = getFirebaseInstance();
   if (!instance) {
     callback(null);
     return () => {};
   }
-  return onAuthStateChanged(instance.auth, callback);
+  return onAuthStateChanged(instance.auth, async (user) => {
+    if (user) {
+      await syncUserProfile(user);
+    }
+    callback(user);
+  });
 }
 
-// 初始 SRS 預設值
 export function createDefaultSRS(): SRSRecord {
   const now = new Date();
   const tomorrow = new Date(now);
@@ -104,17 +104,15 @@ export function createDefaultSRS(): SRSRecord {
   };
 }
 
-// 建立安全的 Document ID 防呆函式（將斜線與非法字元轉為底線，避免產生奇數區段）
 function getSafeWordId(word: string): string {
   if (!word) return "unknown_word";
   return word
     .trim()
     .toLowerCase()
-    .replace(/[/\\#?.]/g, "_") // 把斜線、點、問號等轉為底線
-    .replace(/\s+/g, "_");     // 把空白轉為底線
+    .replace(/[/\\#?.]/g, "_")
+    .replace(/\s+/g, "_");
 }
 
-// 收藏單字卡
 export async function saveWordCard(user: User, analysis: WordAnalysis): Promise<void> {
   const instance = getFirebaseInstance();
   if (!instance) throw new Error("Firebase 尚未初始化");
@@ -123,7 +121,6 @@ export async function saveWordCard(user: User, analysis: WordAnalysis): Promise<
   const wordId = getSafeWordId(rawWord);
   const docRef = doc(instance.db, "users", user.uid, "vocabularies", wordId);
 
-  // 檢查是否已存在，若已存在則保留原有的 SRS 進度
   const existingDoc = await getDoc(docRef);
   let srs = createDefaultSRS();
   let savedAt = new Date().toISOString();
@@ -146,7 +143,6 @@ export async function saveWordCard(user: User, analysis: WordAnalysis): Promise<
   await setDoc(docRef, card);
 }
 
-// 取消收藏單字卡
 export async function removeWordCard(user: User, word: string): Promise<void> {
   const instance = getFirebaseInstance();
   if (!instance) throw new Error("Firebase 尚未初始化");
@@ -156,7 +152,6 @@ export async function removeWordCard(user: User, word: string): Promise<void> {
   await deleteDoc(docRef);
 }
 
-// 檢查單字是否已被收藏
 export async function checkWordSaved(user: User, word: string): Promise<boolean> {
   const instance = getFirebaseInstance();
   if (!instance) return false;
@@ -167,7 +162,6 @@ export async function checkWordSaved(user: User, word: string): Promise<boolean>
   return snap.exists();
 }
 
-// 取得使用者所有收藏的單字卡清單
 export async function fetchUserVocabularies(user: User): Promise<SavedWordCard[]> {
   const instance = getFirebaseInstance();
   if (!instance) return [];
@@ -179,7 +173,6 @@ export async function fetchUserVocabularies(user: User): Promise<SavedWordCard[]
   return snap.docs.map((d) => d.data() as SavedWordCard);
 }
 
-// 更新單一單字卡的 SRS 進度
 export async function updateWordSRS(
   user: User,
   word: string,

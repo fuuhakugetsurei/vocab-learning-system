@@ -6,7 +6,6 @@ import {
   subscribeAuthState,
   signInWithGoogle,
   signOutUser,
-  getStoredFirebaseConfig,
 } from "../lib/firebase";
 import { 
   BookmarkCheck, 
@@ -26,13 +25,10 @@ interface AuthBarProps {
 
 export function AuthBar({ onOpenSettings, onOpenSavedModal, user, setUser }: AuthBarProps) {
   const [loading, setLoading] = useState(false);
-  const [hasConfig, setHasConfig] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const config = getStoredFirebaseConfig();
-    setHasConfig(!!config);
     const unsubscribe = subscribeAuthState((currentUser) => {
       setUser(currentUser);
     });
@@ -51,11 +47,6 @@ export function AuthBar({ onOpenSettings, onOpenSavedModal, user, setUser }: Aut
   }, []);
 
   const handleLogin = async () => {
-    if (!hasConfig) {
-      alert("請先點擊齒輪 ⚙️ 設定並貼入你的 Firebase 配置！");
-      onOpenSettings();
-      return;
-    }
     try {
       setLoading(true);
       await signInWithGoogle();
@@ -132,7 +123,7 @@ export function AuthBar({ onOpenSettings, onOpenSavedModal, user, setUser }: Aut
                   className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition"
                 >
                   <Settings className="w-4 h-4 text-slate-400" />
-                  <span>系統與雲端設定</span>
+                  <span>AI 模型與設定</span>
                 </button>
               </div>
 
@@ -164,11 +155,11 @@ export function AuthBar({ onOpenSettings, onOpenSavedModal, user, setUser }: Aut
         </button>
       )}
 
-      {/* 設定按鈕 (未登入或習慣獨立點擊時使用) */}
+      {/* 設定按鈕 */}
       <button
         onClick={onOpenSettings}
         className="p-2 text-slate-500 hover:text-slate-700 bg-white border border-slate-200 rounded-full hover:bg-slate-50 transition shadow-xs"
-        title="系統與 Firebase 設定"
+        title="AI 模型設定"
       >
         <Settings className="h-4 w-4" />
       </button>

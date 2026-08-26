@@ -2,15 +2,15 @@ name: Daily Vocab Review Reminder
 
 on:
   schedule:
-    # 每天 UTC 00:00 (台灣時間 08:00) 與 UTC 12:00 (台灣時間 20:00) 自動執行
-    - cron: '0 0,12 * * *'
-  workflow_dispatch: # 支援手動點擊測試
+    # 每天台灣時間早上 08:00 (UTC 00:00) 自動執行
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 支援在 GitHub 介面手動觸發測試
 
 jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: 下載專案原始碼
+      - name: 檢出專案代碼
         uses: actions/checkout@v4
 
       - name: 設定 Node.js 環境
@@ -19,13 +19,12 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: 安裝專案相依套件
-        run: npm install
+      - name: 安裝相依套件
+        run: npm ci
 
-      - name: 執行到期檢查並寄送 Gmail
+      - name: 執行全使用者複習提醒檢查
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          USER_ID: ${{ secrets.USER_ID }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         run: node scripts/daily-review-notifier.mjs
