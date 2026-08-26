@@ -104,12 +104,23 @@ export function createDefaultSRS(): SRSRecord {
   };
 }
 
+// 建立安全的 Document ID 防呆函式（將斜線與非法字元轉為底線，避免產生奇數區段）
+function getSafeWordId(word: string): string {
+  if (!word) return "unknown_word";
+  return word
+    .trim()
+    .toLowerCase()
+    .replace(/[/\\#?.]/g, "_") // 把斜線、點、問號等轉為底線
+    .replace(/\s+/g, "_");     // 把空白轉為底線
+}
+
 // 收藏單字卡
 export async function saveWordCard(user: User, analysis: WordAnalysis): Promise<void> {
   const instance = getFirebaseInstance();
   if (!instance) throw new Error("Firebase 尚未初始化");
 
-  const wordId = analysis.word.trim().toLowerCase();
+  const rawWord = analysis.word || analysis.originalWord || "unknown";
+  const wordId = getSafeWordId(rawWord);
   const docRef = doc(instance.db, "users", user.uid, "vocabularies", wordId);
 
   // 檢查是否已存在，若已存在則保留原有的 SRS 進度
@@ -125,11 +136,11 @@ export async function saveWordCard(user: User, analysis: WordAnalysis): Promise<
 
   const card: SavedWordCard = {
     id: wordId,
-    word: analysis.word.trim(),
+    word: rawWord.trim(),
     data: analysis,
     savedAt,
     srs,
-    tags: [analysis.level],
+    tags: [analysis.level || "7000單"],
   };
 
   await setDoc(docRef, card);
@@ -140,7 +151,7 @@ export async function removeWordCard(user: User, word: string): Promise<void> {
   const instance = getFirebaseInstance();
   if (!instance) throw new Error("Firebase 尚未初始化");
 
-  const wordId = word.trim().toLowerCase();
+  const wordId = getSafeWordId(word);
   const docRef = doc(instance.db, "users", user.uid, "vocabularies", wordId);
   await deleteDoc(docRef);
 }
@@ -150,7 +161,7 @@ export async function checkWordSaved(user: User, word: string): Promise<boolean>
   const instance = getFirebaseInstance();
   if (!instance) return false;
 
-  const wordId = word.trim().toLowerCase();
+  const wordId = getSafeWordId(word);
   const docRef = doc(instance.db, "users", user.uid, "vocabularies", wordId);
   const snap = await getDoc(docRef);
   return snap.exists();
@@ -167,6 +178,7 @@ export async function fetchUserVocabularies(user: User): Promise<SavedWordCard[]
 
   return snap.docs.map((d) => d.data() as SavedWordCard);
 }
+
 // 更新單一單字卡的 SRS 進度
 export async function updateWordSRS(
   user: User,
@@ -176,7 +188,7 @@ export async function updateWordSRS(
   const instance = getFirebaseInstance();
   if (!instance) throw new Error("Firebase 尚未初始化");
 
-  const wordId = word.trim().toLowerCase();
+  const wordId = getSafeWordId(word);
   const docRef = doc(instance.db, "users", user.uid, "vocabularies", wordId);
   await setDoc(docRef, { srs: updatedSRS }, { merge: true });
 }
