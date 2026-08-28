@@ -1,11 +1,6 @@
 import { WordAnalysis } from "./schema";
 import ceecRawData from "@/data/ceec-vocab.json";
-import { lookupLocalDict } from "./local-dict";
-
-export interface MeaningItem {
-  pos: string;
-  def: string;
-}
+import { lookupLocalDict, parseDictTranslation, MeaningItem } from "./local-dict";
 
 export interface Raw7000Word {
   word: string;
@@ -19,57 +14,12 @@ export interface Raw7000Word {
   exampleZh?: string;
 }
 
-/**
- * 精準拆解多詞性字串（相容 a., adj., n., vt., vi., adv. 等）
- */
-function parseMultiPosMeanings(rawTranslation: string, fallbackPos: string): MeaningItem[] {
-  if (!rawTranslation) {
-    return [{ pos: fallbackPos || "釋義", def: "常見核心字彙" }];
-  }
-
-  // 將常見的換行與跳脫符號統一轉為分號
-  const normalized = rawTranslation
-    .replace(/\\n/g, " ; ")
-    .replace(/\n/g, " ; ")
-    .trim();
-
-  // 詞性正規標記
-  const posPattern = /(?:^|[;\s；])((?:adj|adv|art|conj|int|prep|pron|num|aux|abbr|phr|vt|vi|[nva])\.)\s*/gi;
-
-  const matches = [...normalized.matchAll(posPattern)];
-  if (matches.length === 0) {
-    return [{ pos: fallbackPos || "釋義", def: normalized }];
-  }
-
-  const items: MeaningItem[] = [];
-  for (let i = 0; i < matches.length; i++) {
-    const current = matches[i];
-    let posTag = current[1].toLowerCase();
-    if (posTag === "a.") posTag = "adj."; // 統一將 a. 正規化為 adj.
-
-    const startIndex = current.index! + current[0].length;
-    const endIndex = i + 1 < matches.length ? matches[i + 1].index! : normalized.length;
-
-    let defText = normalized.substring(startIndex, endIndex).trim();
-    defText = defText.replace(/^[；;,\s]+|[；;,\s]+$/g, ""); // 去除頭尾多餘分號
-
-    if (defText) {
-      items.push({
-        pos: posTag,
-        def: defText,
-      });
-    }
-  }
-
-  return items.length > 0 ? items : [{ pos: fallbackPos || "釋義", def: normalized }];
-}
-
 export function convertRawToWordAnalysis(raw: Raw7000Word): WordAnalysis {
   const meanings = raw.meaningsList && raw.meaningsList.length > 0
     ? raw.meaningsList.map((m) => ({
         pos: m.pos,
-        primary: m.def,
-        secondary: [],
+        primary: m.primary,
+        secondary: m.secondary || [],
       }))
     : [{ pos: raw.pos || "釋義", primary: raw.meaning || "暫無釋義", secondary: [] }];
 
@@ -103,7 +53,7 @@ export async function fetch7000WordsByLevel(level: number): Promise<Raw7000Word[
     // 2. 依照字母 A-Z 固定排序
     filtered.sort((a, b) => a.word.localeCompare(b.word));
 
-    // 3. 補充繁中釋義與音標
+    // 3. 補充繁中釋義與音標 (透過 parseDictTranslation 拆解主次語意)
     const enrichedList: Raw7000Word[] = filtered.map((item) => {
       const cleanWord = item.word.trim();
       const dictResult = lookupLocalDict(cleanWord);
@@ -113,9 +63,9 @@ export async function fetch7000WordsByLevel(level: number): Promise<Raw7000Word[
 
       if (dictResult) {
         phonetic = dictResult.phonetic || "";
-        meaningsList = parseMultiPosMeanings(dictResult.translation || "", item.pos || "");
+        meaningsList = parseDictTranslation(dictResult.translation || "");
       } else {
-        meaningsList = [{ pos: item.pos || "釋義", def: "常見核心字彙" }];
+        meaningsList = [{ pos: item.pos || "釋義", primary: "常見核心字彙", secondary: [] }];
       }
 
       return {
@@ -124,7 +74,7 @@ export async function fetch7000WordsByLevel(level: number): Promise<Raw7000Word[
         pos: item.pos || "",
         phonetic: phonetic,
         meaningsList: meaningsList,
-        meaning: meaningsList.map((m) => `${m.pos} ${m.def}`).join(" ； "),
+        meaning: meaningsList.map((m) => `${m.pos} ${m.primary}`).join(" ； "),
       };
     });
 

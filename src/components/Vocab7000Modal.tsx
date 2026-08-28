@@ -95,10 +95,6 @@ export function Vocab7000Modal({
   };
 
   // 根據使用者的 SRS 記錄判定燈號顏色
-  // 🔴 不熟 (interval <= 2 或 repetition === 0)
-  // 🟡 中等 (interval 3 ~ 10)
-  // 🟢 精熟 (interval > 10)
-  // ⚪️ 未學 (不在雲端字庫中)
   const getWordStatusBadge = (word: string) => {
     const record = userVocabMap.get(word.toLowerCase());
     if (!record) {
@@ -114,10 +110,9 @@ export function Vocab7000Modal({
     }
   };
 
-// 處理評估：不熟 (Quality 1) / 中等 (Quality 3) / 精熟 (Quality 5)
+  // 處理評估：不熟 (Quality 1) / 中等 (Quality 3) / 精熟 (Quality 5)
   const handleRating = async (quality: 1 | 3 | 5) => {
-    if (!currentRawWord) return;
-    if (processingSave) return;
+    if (!currentRawWord || processingSave) return;
 
     if (!user) {
       alert("請先登入 Google 帳號，才能將評估結果同步至雲端排程！");
@@ -133,10 +128,8 @@ export function Vocab7000Modal({
 
       let nextSrs;
       if (!existingRecord) {
-        // 全新單字第一次評估：依據點擊的等級直接設定正確的初始狀態
         const now = new Date();
         if (quality === 5) {
-          // 🟢 精熟：直接跳過新手期，間隔設為 14 天 (精熟門檻 > 10)
           const nextDate = new Date(now);
           nextDate.setDate(now.getDate() + 14);
           nextSrs = {
@@ -147,7 +140,6 @@ export function Vocab7000Modal({
             lastReviewDate: now.toISOString(),
           };
         } else if (quality === 3) {
-          // 🟡 中等：設定間隔為 4 天 (中等門檻 3 ~ 10)
           const nextDate = new Date(now);
           nextDate.setDate(now.getDate() + 4);
           nextSrs = {
@@ -158,7 +150,6 @@ export function Vocab7000Modal({
             lastReviewDate: now.toISOString(),
           };
         } else {
-          // 🔴 不熟：設定間隔為 1 天 (不熟門檻 <= 2)
           const nextDate = new Date(now);
           nextDate.setDate(now.getDate() + 1);
           nextSrs = {
@@ -170,7 +161,6 @@ export function Vocab7000Modal({
           };
         }
       } else {
-        // 已存在的單字：走標準 SM-2 遞增/衰減演算法
         const baseRecord = {
           interval: existingRecord.srs.interval,
           repetition: existingRecord.srs.repetition,
@@ -183,7 +173,6 @@ export function Vocab7000Modal({
 
       await updateWordSRS(user, currentRawWord.word, nextSrs);
       
-      // 即時更新本地 Map
       setUserVocabMap((prev) => {
         const next = new Map(prev);
         next.set(currentRawWord.word.toLowerCase(), {
@@ -308,8 +297,7 @@ export function Vocab7000Modal({
                     找不到符合條件的單字。
                   </div>
                 ) : (
-                  filteredWords.map((wordItem) => {
-                    // 找出原本在 wordList 中的真實索引
+                  filteredWords.map((wordItem: Raw7000Word) => {
                     const originalIndex = wordList.findIndex((w) => w.word === wordItem.word);
 
                     return (
@@ -323,7 +311,6 @@ export function Vocab7000Modal({
                         className="p-3 bg-white hover:bg-blue-50/50 rounded-xl border border-slate-200/80 hover:border-blue-300 transition flex items-center justify-between cursor-pointer shadow-2xs group"
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
-                          {/* 燈號 */}
                           {getWordStatusBadge(wordItem.word)}
                           <span className="font-bold text-slate-900 text-sm group-hover:text-blue-600 transition">
                             {wordItem.word}
@@ -399,18 +386,23 @@ export function Vocab7000Modal({
                     <span>點擊卡片翻面看釋義</span>
                   </div>
                 ) : (
-                  /* 背面內容 */
-                  <div className="mt-6 space-y-3 w-full text-left border-t border-slate-200/80 pt-4 animate-in fade-in zoom-in-95 duration-200 overflow-y-auto max-h-[180px] no-scrollbar">
+                  /* 背面內容：結構化主次語意分離 */
+                  <div className="mt-6 space-y-2.5 w-full text-left border-t border-slate-200/80 pt-4 animate-in fade-in zoom-in-95 duration-200 overflow-y-auto max-h-[180px] no-scrollbar">
                     <div className="space-y-2">
                       {currentRawWord.meaningsList && currentRawWord.meaningsList.length > 0 ? (
                         currentRawWord.meaningsList.map((item, mIdx) => (
-                          <div key={mIdx} className="flex items-start gap-2 text-sm">
-                            <span className="px-2 py-0.5 bg-blue-100 text-blue-800 text-[11px] font-bold rounded shrink-0 mt-0.5">
+                          <div key={mIdx} className="flex flex-wrap items-baseline gap-2 text-sm">
+                            <span className="px-2 py-0.5 bg-blue-100 text-blue-800 text-[11px] font-bold rounded shrink-0">
                               {item.pos}
                             </span>
-                            <span className="font-semibold text-slate-800 leading-snug">
-                              {item.def}
+                            <span className="font-bold text-slate-900 text-base">
+                              {item.primary}
                             </span>
+                            {item.secondary && item.secondary.length > 0 && (
+                              <span className="text-xs text-slate-500 font-normal">
+                                ({item.secondary.slice(0, 4).join("、")})
+                              </span>
+                            )}
                           </div>
                         ))
                       ) : (
@@ -431,7 +423,7 @@ export function Vocab7000Modal({
                           onDeepAnalyze(currentRawWord.word);
                           onClose();
                         }}
-                        className="w-full py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition mt-2"
+                        className="w-full py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition mt-3"
                       >
                         <Sparkles className="h-3.5 w-3.5" />
                         <span>呼叫 AI 產生完整字根與例句</span>

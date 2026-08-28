@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import type { User } from "firebase/auth";
 import { WordAnalysis, SavedWordCard } from "@/lib/schema";
 import SettingsModal from "@/components/SettingsModal";
@@ -33,7 +33,8 @@ import {
   Loader2,
   Trash2,
   Flame,
-  X
+  X,
+  Upload
 } from "lucide-react";
 
 // 擴展型別：支援進行中載入卡片
@@ -45,6 +46,9 @@ export default function Home() {
   const [cards, setCards] = useState<DisplayCard[]>([]);
   const [error, setError] = useState<string | null>(null);
   
+  // 檔案上傳 Ref
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // 使用者與設定狀態
   const [user, setUser] = useState<User | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -116,9 +120,35 @@ export default function Home() {
     refreshUserSavedWords();
   }, [refreshUserSavedWords]);
 
+  // 處理 .txt 檔案匯入
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.endsWith(".txt") && file.type !== "text/plain") {
+      alert("請上傳 .txt 純文字檔案！");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (content) {
+        const formatted = content
+          .split(/[\r\n,，]+/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .join(", ");
+        setInputText(formatted);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
   // 點擊任何單字時觸發本地秒查
   const handleWordClick = async (word: string) => {
-    const clean = word.replace(/^[^a-zA-Z]+|[^a-zA-Z]+$/g, "");
+    const clean = word.replace(/^[^a-zA-Z]+|[^a-zA-Z]+$/g, "").toLowerCase();
     if (!clean) return;
 
     setQuickLoading(true);
@@ -346,9 +376,8 @@ export default function Home() {
     <main className="min-h-screen bg-slate-50 py-10 px-4 sm:px-6 font-sans">
       <div className="max-w-3xl mx-auto space-y-6">
         
-{/* Header (手機版雙層自適應，電腦版單行) */}
+        {/* Header */}
         <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-sm">
-          {/* 上半部：標題與副標題 */}
           <div className="space-y-1 min-w-0">
             <div className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 sm:h-6 sm:w-6 text-blue-600 shrink-0" />
@@ -357,12 +386,11 @@ export default function Home() {
               </h1>
             </div>
             <p className="text-slate-500 text-[11px] sm:text-xs">
-              <span className="hidden sm:inline">支援：中英雙向、點擊快查、7000 單 ｜ </span>引擎：
+              <span className="hidden sm:inline">支援：中英雙向、片語辨識、.txt 匯入 ｜ </span>引擎：
               <span className="font-mono font-semibold text-blue-600">{currentConfigName}</span>
             </p>
           </div>
 
-          {/* 下半部：操作按鈕群 (手機版自動橫排填滿，不擠壓標題) */}
           <div className="flex items-center gap-2 shrink-0 flex-wrap sm:flex-nowrap pt-2 sm:pt-0 border-t border-slate-100 sm:border-t-0">
             {/* 7000 單庫按鈕 */}
             <button
@@ -389,7 +417,7 @@ export default function Home() {
                 <span>
                   {dueCards.length > 0
                     ? `今日複習 (${dueCards.length})`
-                    : `複習 (${savedCards.length})`}
+                    : `合輯與複習 (${savedCards.length})`}
                 </span>
               </button>
             )}
@@ -403,17 +431,34 @@ export default function Home() {
           </div>
         </header>
 
-        {/* 搜尋欄 */}
+        {/* 搜尋欄 (支援逗號分隔與 .txt 檔案匯入) */}
         <form onSubmit={handleSearch} className="flex gap-2">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+            accept=".txt,text/plain"
+            className="hidden"
+          />
+
           <div className="relative flex-1">
             <input
               type="text"
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder="輸入英文或中文（空白分隔），例如：放棄 persistent 繁榮"
-              className="w-full pl-10 pr-4 py-3.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-slate-900 placeholder-slate-400 text-sm shadow-sm transition"
+              placeholder="輸入單字或片語（逗號分隔），例如：放棄, look forward to, persistent"
+              className="w-full pl-10 pr-10 py-3.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-slate-900 placeholder-slate-400 text-sm shadow-sm transition"
             />
             <Search className="absolute left-3.5 top-4 h-4 w-4 text-slate-400" />
+            
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="absolute right-2.5 top-2.5 p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
+              title="匯入 .txt 單字清單"
+            >
+              <Upload className="h-4 w-4" />
+            </button>
           </div>
           <button
             type="submit"
@@ -809,11 +854,11 @@ export default function Home() {
         onDeepAnalyze={triggerDeepAnalysisForWord}
       />
 
-      {/* SRS 智慧複習彈窗 */}
+      {/* SRS 智慧複習與合輯管理彈窗 */}
       <ReviewModal
         isOpen={isReviewOpen}
         onClose={() => setIsReviewOpen(false)}
-        dueCards={dueCards.length > 0 ? dueCards : savedCards}
+        dueCards={savedCards}
         user={user}
         onReviewFinished={refreshUserSavedWords}
       />

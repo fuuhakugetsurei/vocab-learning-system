@@ -1,63 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
+import { lookupLocalDict } from "@/lib/local-dict";
+import { lookupCEECLevel } from "@/lib/ceec-dict";
 
-// 緩存 7000 單資料
-let cachedCeecData: Array<{
-  word: string;
-  level: number;
-  phonetic?: string;
-  translation?: string;
-  pos?: string;
-}> | null = null;
-
-function loadCeecData() {
-  if (!cachedCeecData) {
-    try {
-      const filePath = path.join(process.cwd(), "src/data/ceec-vocab.json");
-      if (fs.existsSync(filePath)) {
-        const raw = fs.readFileSync(filePath, "utf-8");
-        cachedCeecData = JSON.parse(raw);
-      }
-    } catch (err) {
-      console.error("讀取 ceec-vocab.json 失敗:", err);
-      cachedCeecData = [];
-    }
-  }
-  return cachedCeecData || [];
-}
+export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const levelParam = searchParams.get("level");
-  const wordParam = searchParams.get("word");
+  try {
+    const { searchParams } = new URL(req.url);
+    const wordParam = searchParams.get("word");
 
-  // 1. 如果是請求指定 Level 的 7000 單清單
-  if (levelParam) {
-    const level = parseInt(levelParam, 10);
-    const allWords = loadCeecData();
-    const filtered = allWords.filter((item) => Number(item.level) === level);
-    return NextResponse.json(filtered);
-  }
+    if (!wordParam) {
+      return NextResponse.json({ error: "Missing word query" }, { status: 400 });
+    }
 
-  // 2. 原本的單字快查邏輯 (word)
-  if (wordParam) {
     const cleanWord = wordParam.trim().toLowerCase();
-    const allWords = loadCeecData();
-    const found = allWords.find((w) => w.word.toLowerCase() === cleanWord);
+    
+    // 1. 查本地 ECDICT 字典 (取得音標與繁中釋義)
+    const localData = lookupLocalDict(cleanWord);
+    
+    // 2. 查 CEEC 7000 單分級
+    const ceecLevel = lookupCEECLevel(cleanWord);
 
-    if (found) {
+    if (!localData || !localData.translation) {
       return NextResponse.json({
-        found: true,
-        word: found.word,
-        phonetic: found.phonetic || "",
-        translation: found.translation || "",
-        level: `Level ${found.level}`,
+        found: false,
+        word: cleanWord,
+        level: ceecLevel || "7000單外",
       });
     }
 
-    return NextResponse.json({ found: false, word: cleanWord });
+    return NextResponse.json({
+      found: true,
+      word: cleanWord,
+      phonetic: localData.phonetic || "",
+      translation: localData.translation || "",
+      level: ceecLevel || "7000單外",
+    });
+  } catch (err: unknown) {
+    console.error("Quick lookup error:", err);
+    return NextResponse.json({ found: false, word: "" }, { status: 500 });
   }
-
-  return NextResponse.json({ error: "Missing level or word query" }, { status: 400 });
 }

@@ -18,6 +18,7 @@ import {
   getDocs, 
   query, 
   orderBy, 
+  writeBatch,
   Firestore 
 } from "firebase/firestore";
 import { WordAnalysis, SavedWordCard, SRSRecord } from "./schema";
@@ -43,7 +44,6 @@ export function getFirebaseInstance(): { app: FirebaseApp; auth: Auth; db: Fires
   return { app, auth, db };
 }
 
-// 同步登入使用者的 Profile，確保後端排程能抓到寄件信箱
 export async function syncUserProfile(user: User): Promise<void> {
   const instance = getFirebaseInstance();
   if (!instance) return;
@@ -124,11 +124,15 @@ export async function saveWordCard(user: User, analysis: WordAnalysis): Promise<
   const existingDoc = await getDoc(docRef);
   let srs = createDefaultSRS();
   let savedAt = new Date().toISOString();
+  let folder = "";
+  let order = 999999;
 
   if (existingDoc.exists()) {
     const prev = existingDoc.data() as SavedWordCard;
     if (prev.srs) srs = prev.srs;
     if (prev.savedAt) savedAt = prev.savedAt;
+    if (prev.folder) folder = prev.folder;
+    if (typeof prev.order === "number") order = prev.order;
   }
 
   const card: SavedWordCard = {
@@ -138,9 +142,11 @@ export async function saveWordCard(user: User, analysis: WordAnalysis): Promise<
     savedAt,
     srs,
     tags: [analysis.level || "7000單"],
+    folder,
+    order,
   };
 
-  await setDoc(docRef, card);
+  await setDoc(docRef, card, { merge: true });
 }
 
 export async function removeWordCard(user: User, word: string): Promise<void> {
@@ -184,4 +190,54 @@ export async function updateWordSRS(
   const wordId = getSafeWordId(word);
   const docRef = doc(instance.db, "users", user.uid, "vocabularies", wordId);
   await setDoc(docRef, { srs: updatedSRS }, { merge: true });
+}
+
+export async function updateWordFolder(
+  user: User,
+  word: string,
+  folderName: string
+): Promise<void> {
+  const instance = getFirebaseInstance();
+  if (!instance) throw new Error("Firebase 尚未初始化");
+
+  const wordId = getSafeWordId(word);
+  const docRef = doc(instance.db, "users", user.uid, "vocabularies", wordId);
+  await setDoc(docRef, { folder: folderName }, { merge: true });
+}
+
+export async function updateWordsOrder(
+  user: User,
+  orderedCardIds: string[]
+): Promise<void> {
+  const instance = getFirebaseInstance();
+  if (!instance) throw new Error("Firebase 尚未初始化");
+
+  const batch = writeBatch(instance.db);
+  orderedCardIds.forEach((id, index) => {
+    const docRef = doc(instance.db, "users", user.uid, "vocabularies", id);
+    batch.update(docRef, { order: index });
+  });
+
+  await batch.commit();
+}
+
+export async function saveUserFolders(user: User, folders: string[]): Promise<void> {
+  const instance = getFirebaseInstance();
+  if (!instance) return;
+
+  const userDocRef = doc(instance.db, "users", user.uid);
+  await setDoc(userDocRef, { customFolders: folders }, { merge: true });
+}
+
+export async function fetchUserFolders(user: User): Promise<string[]> {
+  const instance = getFirebaseInstance();
+  if (!instance) return [];
+
+  const userDocRef = doc(instance.db, "users", user.uid);
+  const snap = await getDoc(userDocRef);
+  if (snap.exists()) {
+    const data = snap.data();
+    return Array.isArray(data.customFolders) ? data.customFolders : [];
+  }
+  return [];
 }

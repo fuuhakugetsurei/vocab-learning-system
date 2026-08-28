@@ -1,7 +1,8 @@
-'use client';
+"use client";
 
-import React from 'react';
-import { Volume2, X, Sparkles, GraduationCap } from 'lucide-react';
+import React from "react";
+import { Volume2, X, Sparkles, GraduationCap } from "lucide-react";
+import { parseDictTranslation } from "@/lib/local-dict";
 
 export interface QuickLookupData {
   found: boolean;
@@ -29,15 +30,16 @@ export default function QuickLookupModal({
   if (!isOpen) return null;
 
   const playAudio = (text: string) => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-US';
+      utterance.lang = "en-US";
+      utterance.rate = 0.9;
       window.speechSynthesis.speak(utterance);
     }
   };
 
-  // 1. 分級文字正規化（防疊字並加上階段描述）
+  // 分級徽章渲染
   const renderLevelBadge = (rawLevel?: string) => {
     if (!rawLevel) return null;
 
@@ -73,7 +75,7 @@ export default function QuickLookupModal({
     );
   };
 
-  // 2. 清洗 ECDICT 釋義字串（轉換字面值 \n 與分行）
+  // 結構化解析並呈現釋義
   const renderCleanTranslation = (translation?: string) => {
     if (!translation) {
       return (
@@ -81,20 +83,27 @@ export default function QuickLookupModal({
       );
     }
 
-    // 將字面值 \n、換行符替換並依行拆分
-    const lines = translation
-      .replace(/\\+[rn]/g, '\n')
-      .replace(/\r\n|\r|\n/g, '\n')
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean);
+    const parsedMeanings = parseDictTranslation(translation);
 
     return (
-      <div className="space-y-1.5">
-        {lines.map((line, idx) => (
-          <p key={idx} className="leading-relaxed text-slate-800">
-            {line}
-          </p>
+      <div className="space-y-2 text-left">
+        {parsedMeanings.map((m, idx) => (
+          <div key={idx} className="flex flex-wrap items-baseline gap-1.5 text-xs">
+            {/* 詞性標籤 */}
+            <span className="font-bold px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded border border-slate-200 shrink-0">
+              {m.pos}
+            </span>
+            {/* 第一核心語意 */}
+            <span className="font-bold text-slate-900 text-sm">
+              {m.primary}
+            </span>
+            {/* 次要衍生語意 */}
+            {m.secondary.length > 0 && (
+              <span className="text-slate-500 font-normal">
+                ({m.secondary.slice(0, 3).join("、")})
+              </span>
+            )}
+          </div>
         ))}
       </div>
     );
@@ -121,8 +130,9 @@ export default function QuickLookupModal({
             </div>
             {data?.phonetic && (
               <div className="flex items-center gap-1.5 text-xs text-slate-500 font-mono mt-1">
-                <span>{data.phonetic}</span>
+                <span>/{data.phonetic}/</span>
                 <button
+                  type="button"
                   onClick={() => data?.word && playAudio(data.word)}
                   className="p-1 hover:bg-slate-100 rounded text-blue-600 transition"
                   title="發音"
@@ -134,6 +144,7 @@ export default function QuickLookupModal({
           </div>
 
           <button
+            type="button"
             onClick={onClose}
             className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition"
           >
@@ -156,12 +167,14 @@ export default function QuickLookupModal({
         {/* 底部動作按鈕 */}
         <div className="flex justify-end gap-2">
           <button
+            type="button"
             onClick={onClose}
             className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-lg font-medium transition"
           >
             關閉
           </button>
           <button
+            type="button"
             onClick={() => {
               if (data?.word) {
                 onDeepAnalyze(data.word);

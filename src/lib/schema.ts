@@ -55,9 +55,8 @@ export const WordAnalysisSchema = z.object({
     .nullish()
     .transform((v) => v || []),
 
-  // 在 synonyms 底下新增 confusables
   synonyms: z.array(z.string()).nullish().transform((v) => v || []),
-  confusables: z.array(z.string()).nullish().transform((v) => v || []).describe("形近或易混淆單字清單")
+  confusables: z.array(z.string()).nullish().transform((v) => v || []).describe("形近或易混淆單字清單"),
 });
 
 export const BatchWordAnalysisSchema = z.object({
@@ -66,7 +65,7 @@ export const BatchWordAnalysisSchema = z.object({
 
 export type WordAnalysis = z.infer<typeof WordAnalysisSchema>;
 
-// --- 新增：雲端單字卡與 SRS 複習型別 ---
+// --- 雲端單字卡與 SRS 複習型別 ---
 
 export interface SRSRecord {
   interval: number;       // 當前間隔天數 (I_n)
@@ -83,4 +82,6 @@ export interface SavedWordCard {
   savedAt: string;        // 收藏時間 (ISO 8601 字串)
   srs: SRSRecord;         // SRS 複習狀態
   tags?: string[];        // 標籤 (預設包含 CEEC 等級)
+  folder?: string;        // 自訂合輯/資料夾名稱
+  order?: number;         // 拖曳排序權重
 }

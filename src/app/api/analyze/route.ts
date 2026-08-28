@@ -90,26 +90,30 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    // 1. 提取並清理輸入單字清單
-    let words: string[] = [];
+    // 1. 提取並清理輸入單字清單（支援逗號、換行分隔，保留片語空格）
+    let rawItems: string[] = [];
     if (Array.isArray(body)) {
-      words = body.map(String);
+      rawItems = body.map(String);
     } else if (body && typeof body === 'object') {
       const candidate =
         body.input ?? body.words ?? body.query ?? body.text ?? body.search;
       if (Array.isArray(candidate)) {
-        words = candidate.map(String);
+        rawItems = candidate.map(String);
       } else if (typeof candidate === 'string') {
-        words = candidate.trim().split(/\s+/);
+        // 修正點：以 逗號、換行 切分，不再使用 \s+ 破壞片語空格
+        rawItems = candidate.split(/[,，\r\n]+/);
       }
     }
 
-    words = words.map((w) => w.trim()).filter((w) => w.length > 0);
+    const words = rawItems
+      .map((w) => w.trim())
+      .filter((w) => w.length > 0);
+
     if (words.length === 0) {
-      return NextResponse.json({ error: '請提供要查詢的單字清單' }, { status: 400 });
+      return NextResponse.json({ error: '請提供要查詢的單字或片語清單' }, { status: 400 });
     }
 
-    // 2. 解構 API 設定 (相容 body.config 物件或頂層傳參)
+    // 2. 解構 API 設定
     let provider = body.provider || 'gemini';
     let apiKey = body.apiKey || '';
     let baseUrl = body.baseUrl || '';
@@ -131,27 +135,36 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. 本地 ECDICT 字典預查與分類
-    const wordsWithLocalInfo = words.map((cleanWord: string) => {
+    // 3. 本地 ECDICT 字典預查與分類（若為片語或含空格，則不查單詞本地字典，由 AI 主導）
+    const wordsWithLocalInfo = words.map((rawWord: string) => {
+      // 若使用者輸入了底線 (take_part_in)，也轉換為空格標準片語格式
+      const cleanWord = rawWord.includes('_') ? rawWord.replace(/_+/g, ' ').trim() : rawWord;
       const isChinese = /[\u4e00-\u9fa5]/.test(cleanWord);
-      const localData = isChinese ? null : lookupLocalDict(cleanWord);
+      const isPhrase = cleanWord.includes(' ');
+      const localData = (isChinese || isPhrase) ? null : lookupLocalDict(cleanWord);
+
       return {
-        originalWord: cleanWord,
+        originalWord: rawWord,
+        cleanWord,
         isChinese,
+        isPhrase,
         localData,
       };
     });
 
-    // 4. 構建極限節流 Prompt
+    // 4. 構建 Prompt
     const promptInputList = wordsWithLocalInfo
       .map((item, idx) => {
         if (item.isChinese) {
-          return `${idx + 1}. 中文概念: "${item.originalWord}" (請反查其核心對應英文單字，並給予深度分析)`;
+          return `${idx + 1}. 中文概念: "${item.cleanWord}" (請反查其核心對應英文單字或片語，並給予深度分析)`;
+        }
+        if (item.isPhrase) {
+          return `${idx + 1}. 英文片語: "${item.cleanWord}" (請給予完整詞性如 phr.、繁中釋義、搭配詞、記憶法與例句)`;
         }
         if (item.localData) {
-          return `${idx + 1}. 英文單字: "${item.originalWord}" (已知音標: "${item.localData.phonetic}", 已知中譯: "${item.localData.translation}")`;
+          return `${idx + 1}. 英文單字: "${item.cleanWord}" (已知音標: "${item.localData.phonetic}", 已知中譯: "${item.localData.translation}")`;
         }
-        return `${idx + 1}. 英文輸入: "${item.originalWord}" (字典無資料，若為拼錯請更正，並提供完整分析)`;
+        return `${idx + 1}. 英文輸入: "${item.cleanWord}" (字典無資料，若為拼錯請更正，並提供完整分析)`;
       })
       .join('\n');
 
@@ -161,43 +174,43 @@ export async function POST(req: NextRequest) {
 【重要準則】
 1. 所有中文說明（釋義、詞性說明、字根解析、搭配詞釋義、記憶技巧、例句翻譯）一律嚴格使用台灣繁體中文，禁止使用簡體字。
 2. 輸出必須為純 JSON 陣列格式 [...]，禁止任何額外文字或 Markdown 標籤。
-3. 若輸入是片語或字典無資料，務必在 meanings 中填寫詞性 (pos: 如 "phr." 或 "v.") 與主要繁中釋義 (primary)。
+3. 若輸入是片語（如 "take part in"），務必在 meanings 中填寫詞性 (pos: 如 "phr." 或 "v.") 與主要繁中釋義 (primary)。
 4. 若偵測到使用者拼錯單字或輸入底線分隔，請將 isCorrected 設為 true，並於 word 填入標準英文單字/片語。
-5. 請提供 2~4 個外型或發音極為相似的「形近/易混淆字」(confusables)，例如 cap 應列出 ["cop", "cope", "cape"]。
+5. 請提供 2~4 個外型或發音極為相似的「形近/易混淆字」(confusables)，片語亦可提供結構相似的片語。
 【輸出範例結構】
 [
   {
-    "originalWord": "shake_it_off",
+    "originalWord": "take part in",
     "isValid": true,
-    "isCorrected": true,
+    "isCorrected": false,
     "errorMessage": "",
-    "word": "shake off",
-    "phonetic": "/ʃeɪk ɔf/",
+    "word": "take part in",
+    "phonetic": "/teɪk pɑːrt ɪn/",
     "meanings": [
-      { "pos": "phr.", "primary": "擺脫；甩掉", "secondary": ["治好 (感冒)", "抖落"] }
+      { "pos": "phr.", "primary": "參加；參與", "secondary": ["加入", "分擔"] }
     ],
     "collocations": [
       {
-        "phrase": "shake off a cold",
-        "meaning": "擺脫感冒",
-        "example": "It took me a week to shake off that cold."
+        "phrase": "take an active part in",
+        "meaning": "積極參與",
+        "example": "She takes an active part in school activities."
       }
     ],
     "etymology": {
       "prefix": "",
-      "root": "shake (震動) + off (離開)",
+      "root": "take (取得) + part (部分) + in (在...之中) -> 參與其中",
       "suffix": "",
-      "relatedWords": ["shock", "shiver"]
+      "relatedWords": ["participate", "join"]
     },
-    "mnemonics": "用力「搖一搖 (shake)」讓壞情緒全部「離開 (off)」。",
+    "mnemonics": "在活動中「拿 (take)」走屬於自己的那一個「角色/份額 (part)」，就是「參加」。",
     "examples": [
       {
-        "en": "She managed to shake off her nervousness.",
-        "zh": "她在演出前成功甩掉了緊張情緒。"
+        "en": "About 400 students took part in the competition.",
+        "zh": "大約有 400 名學生參加了這場競賽。"
       }
     ],
-    "synonyms": ["desert", "forsake", "relinquish"],
-    "confusables": ["abundant", "bandon"]
+    "synonyms": ["participate in", "join in", "engage in"],
+    "confusables": ["take place", "take apart", "take pride in"]
   }
 ]`;
 
@@ -287,7 +300,7 @@ export async function POST(req: NextRequest) {
     // 7. 本地字典與 AI 結果深度合併
     const mergedResults: WordAnalysis[] = wordsWithLocalInfo.map((info, idx) => {
       const aiData = parsed[idx] || {};
-      const targetWord = aiData.word || info.originalWord;
+      const targetWord = aiData.word || info.cleanWord;
       const ceecLevelStr = lookupCEECLevel(targetWord);
 
       const phonetic = info.localData?.phonetic || aiData.phonetic || '';
@@ -297,13 +310,13 @@ export async function POST(req: NextRequest) {
         : (aiData.meanings || []);
 
       if (!meanings || meanings.length === 0) {
-        meanings = [{ pos: '釋義', primary: '暫無詳細釋義', secondary: [] }];
+        meanings = [{ pos: 'phr.', primary: '暫無詳細釋義', secondary: [] }];
       }
 
       const isCorrected =
         typeof aiData.isCorrected === 'boolean'
           ? aiData.isCorrected
-          : info.originalWord.toLowerCase() !== targetWord.toLowerCase() && !info.isChinese;
+          : info.cleanWord.toLowerCase() !== targetWord.toLowerCase() && !info.isChinese;
 
       return {
         originalWord: info.originalWord,
@@ -312,7 +325,7 @@ export async function POST(req: NextRequest) {
         errorMessage: aiData.errorMessage || '',
         word: targetWord,
         phonetic,
-        level: ceecLevelStr || '7000單外', // 直接使用 clean 字串，不重複加 Level
+        level: ceecLevelStr || '7000單外',
         source: info.localData ? 'dict+ai' : 'ai-only',
         meanings,
         collocations: aiData.collocations || [],
@@ -329,7 +342,7 @@ export async function POST(req: NextRequest) {
       };
     });
 
-    // 8. 最終 Zod Schema 嚴格型別校驗
+    // 8. 最終 Zod Schema 校驗
     const ArraySchema = z.array(WordAnalysisSchema);
     const validation = ArraySchema.safeParse(mergedResults);
 
