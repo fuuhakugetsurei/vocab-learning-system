@@ -33,7 +33,7 @@ export interface ProviderGuide {
 export const PROVIDER_GUIDES: Record<ProviderType, ProviderGuide> = {
   gemini: {
     name: "Google Gemini",
-    defaultModel: "gemini-2.5-flash",
+    defaultModel: "gemini-3.1-flash-lite",
     keyGuide: {
       title: "Google AI Studio 取得 API Key",
       url: "https://aistudio.google.com/app/apikey",
@@ -47,7 +47,7 @@ export const PROVIDER_GUIDES: Record<ProviderType, ProviderGuide> = {
     modelGuide: {
       title: "Gemini 模型 ID 查詢",
       url: "https://ai.google.dev/gemini-api/docs/models/gemini",
-      recommended: ["gemini-2.5-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
+      recommended: ["gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-3.5-flash-lite"],
     },
   },
   groq: {
