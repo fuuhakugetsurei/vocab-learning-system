@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import type { User } from "firebase/auth";
 import { Raw7000Word, convertRawToWordAnalysis, fetch7000WordsByLevel } from "@/lib/vocab7000";
-import { saveWordCard, updateWordSRS, fetchUserVocabularies } from "@/lib/firebase";
+import { saveWordCard, updateWordSRS, fetchUserVocabularies, removeWordCard } from "@/lib/firebase";
 import { calculateSM2 } from "@/lib/srs";
 import { WordAnalysis, SavedWordCard } from "@/lib/schema";
 import { 
@@ -121,73 +121,77 @@ export function Vocab7000Modal({
 
     try {
       setProcessingSave(true);
-      const fullData: WordAnalysis = convertRawToWordAnalysis(currentRawWord);
-      await saveWordCard(user, fullData);
+      const wordKey = currentRawWord.word.toLowerCase();
+      const existingRecord = userVocabMap.get(wordKey);
 
-      const existingRecord = userVocabMap.get(currentRawWord.word.toLowerCase());
-
-      let nextSrs;
-      if (!existingRecord) {
-        const now = new Date();
-        if (quality === 5) {
-          const nextDate = new Date(now);
-          nextDate.setDate(now.getDate() + 14);
-          nextSrs = {
-            interval: 14,
-            repetition: 3,
-            easeFactor: 2.6,
-            nextReviewDate: nextDate.toISOString(),
-            lastReviewDate: now.toISOString(),
-          };
-        } else if (quality === 3) {
-          const nextDate = new Date(now);
-          nextDate.setDate(now.getDate() + 4);
-          nextSrs = {
-            interval: 4,
-            repetition: 1,
-            easeFactor: 2.5,
-            nextReviewDate: nextDate.toISOString(),
-            lastReviewDate: now.toISOString(),
-          };
-        } else {
-          const nextDate = new Date(now);
-          nextDate.setDate(now.getDate() + 1);
-          nextSrs = {
-            interval: 1,
-            repetition: 0,
-            easeFactor: 2.3,
-            nextReviewDate: nextDate.toISOString(),
-            lastReviewDate: now.toISOString(),
-          };
+      if (quality === 5) {
+        // 🟢 點擊精熟：不排入複習清單，若過去有加入過則從雲端移除
+        if (existingRecord) {
+          await removeWordCard(user, currentRawWord.word);
+          setUserVocabMap((prev) => {
+            const next = new Map(prev);
+            next.delete(wordKey);
+            return next;
+          });
         }
       } else {
-        const baseRecord = {
-          interval: existingRecord.srs.interval,
-          repetition: existingRecord.srs.repetition,
-          easeFactor: existingRecord.srs.easeFactor,
-          nextReviewDate: existingRecord.srs.nextReviewDate,
-          lastReviewDate: existingRecord.srs.lastReviewDate,
-        };
-        nextSrs = calculateSM2(baseRecord, quality);
-      }
+        // 🔴 不熟 (1) 或 🟡 中等 (3)：正式存入雲端並排定 SRS 複習
+        const fullData: WordAnalysis = convertRawToWordAnalysis(currentRawWord);
+        await saveWordCard(user, fullData);
 
-      await updateWordSRS(user, currentRawWord.word, nextSrs);
-      
-      setUserVocabMap((prev) => {
-        const next = new Map(prev);
-        next.set(currentRawWord.word.toLowerCase(), {
-          id: currentRawWord.word.toLowerCase(),
-          word: currentRawWord.word,
-          data: fullData,
-          savedAt: existingRecord?.savedAt || new Date().toISOString(),
-          srs: nextSrs,
+        let nextSrs;
+        if (!existingRecord) {
+          const now = new Date();
+          if (quality === 3) {
+            const nextDate = new Date(now);
+            nextDate.setDate(now.getDate() + 3);
+            nextSrs = {
+              interval: 3,
+              repetition: 1,
+              easeFactor: 2.5,
+              nextReviewDate: nextDate.toISOString(),
+              lastReviewDate: now.toISOString(),
+            };
+          } else {
+            const nextDate = new Date(now);
+            nextDate.setDate(now.getDate() + 1);
+            nextSrs = {
+              interval: 1,
+              repetition: 0,
+              easeFactor: 2.3,
+              nextReviewDate: nextDate.toISOString(),
+              lastReviewDate: now.toISOString(),
+            };
+          }
+        } else {
+          const baseRecord = {
+            interval: existingRecord.srs.interval,
+            repetition: existingRecord.srs.repetition,
+            easeFactor: existingRecord.srs.easeFactor,
+            nextReviewDate: existingRecord.srs.nextReviewDate,
+            lastReviewDate: existingRecord.srs.lastReviewDate,
+          };
+          nextSrs = calculateSM2(baseRecord, quality);
+        }
+
+        await updateWordSRS(user, currentRawWord.word, nextSrs);
+        
+        setUserVocabMap((prev) => {
+          const next = new Map(prev);
+          next.set(wordKey, {
+            id: wordKey,
+            word: currentRawWord.word,
+            data: fullData,
+            savedAt: existingRecord?.savedAt || new Date().toISOString(),
+            srs: nextSrs,
+          });
+          return next;
         });
-        return next;
-      });
+      }
 
       if (onCardSaved) onCardSaved();
     } catch (err) {
-      console.error("同步至複習排程失敗:", err);
+      console.error("處理評分進度失敗:", err);
     } finally {
       setProcessingSave(false);
     }
@@ -273,7 +277,6 @@ export function Vocab7000Modal({
           ) : viewMode === "list" ? (
             /* ================= 視圖 A：單字列表總覽 ================= */
             <div className="flex-1 flex flex-col h-full space-y-3">
-              {/* 搜尋框與統計 */}
               <div className="flex items-center justify-between gap-3">
                 <div className="relative flex-1">
                   <input
@@ -290,7 +293,6 @@ export function Vocab7000Modal({
                 </div>
               </div>
 
-              {/* 列表容器 */}
               <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
                 {filteredWords.length === 0 ? (
                   <div className="text-center py-12 text-slate-400 text-xs">
@@ -337,7 +339,6 @@ export function Vocab7000Modal({
           ) : (
             /* ================= 視圖 B：單字卡翻卡學習 ================= */
             <div className="flex-1 flex flex-col justify-between h-full">
-              {/* 進度提示 */}
               <div className="flex justify-between items-center text-xs text-slate-400 mb-2">
                 <span>Level {selectedLevel} 學習卡片</span>
                 <span>
@@ -345,7 +346,6 @@ export function Vocab7000Modal({
                 </span>
               </div>
 
-              {/* 翻轉字卡主體 */}
               <div
                 onClick={() => !isFlipped && setIsFlipped(true)}
                 className={`relative flex-1 rounded-2xl border p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-300 shadow-xs ${
@@ -354,7 +354,6 @@ export function Vocab7000Modal({
                     : "bg-gradient-to-b from-white to-blue-50/30 border-blue-200 hover:border-blue-400 hover:shadow-md"
                 }`}
               >
-                {/* 單字發音與標題 */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-center gap-2">
                     {getWordStatusBadge(currentRawWord.word)}
@@ -379,14 +378,12 @@ export function Vocab7000Modal({
                   )}
                 </div>
 
-                {/* 正面提示 */}
                 {!isFlipped ? (
                   <div className="mt-8 flex items-center gap-1 text-xs text-blue-600 font-medium animate-pulse">
                     <RotateCw className="h-3.5 w-3.5" />
                     <span>點擊卡片翻面看釋義</span>
                   </div>
                 ) : (
-                  /* 背面內容：結構化主次語意分離 */
                   <div className="mt-6 space-y-2.5 w-full text-left border-t border-slate-200/80 pt-4 animate-in fade-in zoom-in-95 duration-200 overflow-y-auto max-h-[180px] no-scrollbar">
                     <div className="space-y-2">
                       {currentRawWord.meaningsList && currentRawWord.meaningsList.length > 0 ? (
@@ -414,7 +411,6 @@ export function Vocab7000Modal({
                       )}
                     </div>
 
-                    {/* AI 深度解析按鈕 */}
                     {onDeepAnalyze && (
                       <button
                         type="button"
