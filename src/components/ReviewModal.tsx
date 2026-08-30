@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { User } from "firebase/auth";
 import { SavedWordCard } from "@/lib/schema";
 import { calculateSM2, ReviewGrade } from "@/lib/srs";
@@ -31,7 +31,8 @@ import {
   FolderMinus, 
   LogOut as FolderOut, 
   CheckSquare, 
-  Square 
+  Square,
+  ArrowRight
 } from "lucide-react";
 
 interface ReviewModalProps {
@@ -49,6 +50,7 @@ export function ReviewModal({
   user,
   onReviewFinished,
 }: ReviewModalProps) {
+  // 1. 所有 useState 宣告在最頂層
   const [viewMode, setViewMode] = useState<"list" | "card">("list");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
@@ -59,9 +61,18 @@ export function ReviewModal({
   const [localList, setLocalList] = useState<SavedWordCard[]>([]);
   const [customFolders, setCustomFolders] = useState<string[]>([]);
   const [selectedWordIds, setSelectedWordIds] = useState<Set<string>>(new Set());
+  const [shouldUpdateSRS, setShouldUpdateSRS] = useState<boolean>(true);
 
+  // 紀錄彈窗是否剛開啟，用來自動決定要不要直衝卡片模式
+  const hasInitializedOpen = useRef(false);
+
+  // 2. 所有 useEffect 與 useMemo 宣告在最頂層（無條件執行）
   useEffect(() => {
-    if (!isOpen || !user) return;
+    if (!isOpen || !user) {
+      hasInitializedOpen.current = false;
+      return;
+    }
+
     async function loadFolders() {
       try {
         const saved = await fetchUserFolders(user!);
@@ -71,7 +82,24 @@ export function ReviewModal({
       }
     }
     loadFolders();
-  }, [isOpen, user]);
+
+    // 彈窗打開時：若今天有到期單字，直接進入卡片模式；否則進入列表
+    if (!hasInitializedOpen.current) {
+      const hasActualDueWords = dueCards.some((c) => {
+        if (!c.srs?.nextReviewDate) return true;
+        return new Date(c.srs.nextReviewDate).getTime() <= Date.now();
+      });
+
+      if (hasActualDueWords) {
+        setViewMode("card");
+        setCurrentIndex(0);
+        setIsFlipped(false);
+      } else {
+        setViewMode("list");
+      }
+      hasInitializedOpen.current = true;
+    }
+  }, [isOpen, user, dueCards]);
 
   const allFolders = useMemo(() => {
     const set = new Set<string>(customFolders);
@@ -83,6 +111,18 @@ export function ReviewModal({
 
   const filteredCards = useMemo(() => {
     let list = [...dueCards];
+
+    // 如果是剛打開且直接進入卡片模式，優先篩出今天真正到期的單字
+    if (viewMode === "card" && selectedFolder === "all" && !searchQuery.trim()) {
+      const actualDues = list.filter((c) => {
+        if (!c.srs?.nextReviewDate) return true;
+        return new Date(c.srs.nextReviewDate).getTime() <= Date.now();
+      });
+      if (actualDues.length > 0) {
+        actualDues.sort((a, b) => (a.order ?? 999999) - (b.order ?? 999999));
+        return actualDues;
+      }
+    }
 
     if (selectedFolder === "unassigned") {
       list = list.filter((c) => !c.folder || !c.folder.trim());
@@ -101,7 +141,7 @@ export function ReviewModal({
     }
 
     return list;
-  }, [dueCards, selectedFolder, searchQuery]);
+  }, [dueCards, selectedFolder, searchQuery, viewMode]);
 
   const availableToAddCards = useMemo(() => {
     if (selectedFolder === "all" || selectedFolder === "unassigned") return [];
@@ -113,9 +153,22 @@ export function ReviewModal({
     setSelectedWordIds(new Set());
   }, [filteredCards, selectedFolder]);
 
+  const currentCard = localList[currentIndex];
+
+  const isCurrentCardDue = useMemo(() => {
+    if (!currentCard?.srs?.nextReviewDate) return true;
+    return new Date(currentCard.srs.nextReviewDate).getTime() <= Date.now();
+  }, [currentCard]);
+
+  useEffect(() => {
+    if (currentCard) {
+      setShouldUpdateSRS(isCurrentCardDue);
+    }
+  }, [currentIndex, isCurrentCardDue, currentCard]);
+
+  // 3. 嚴格在所有 Hook 執行完畢後，才做 Early Return
   if (!isOpen) return null;
 
-  const currentCard = localList[currentIndex];
   const isFinished = !currentCard || currentIndex >= localList.length;
 
   const playAudio = (text: string) => {
@@ -278,13 +331,24 @@ export function ReviewModal({
     }
   };
 
+  const handleNextCardOnly = () => {
+    setIsFlipped(false);
+    if (currentIndex < localList.length - 1) {
+      setCurrentIndex((prev) => prev + 1);
+    } else {
+      setViewMode("list");
+    }
+  };
+
   const handleGrade = async (grade: ReviewGrade) => {
     if (!user || !currentCard || isSubmitting) return;
 
     try {
       setIsSubmitting(true);
-      const newSRS = calculateSM2(currentCard.srs, grade);
-      await updateWordSRS(user, currentCard.word, newSRS);
+      if (shouldUpdateSRS) {
+        const newSRS = calculateSM2(currentCard.srs, grade);
+        await updateWordSRS(user, currentCard.word, newSRS);
+      }
 
       setIsFlipped(false);
       if (currentIndex < localList.length - 1) {
@@ -373,8 +437,8 @@ export function ReviewModal({
             <Sparkles className="h-5 w-5 text-indigo-600" />
             <h2 className="text-base font-bold text-slate-900">
               {viewMode === "list" 
-                ? (selectedFolder === "all" ? "全部待複習單字" : selectedFolder === "unassigned" ? "未分類單字" : `合輯：${selectedFolder}`)
-                : "SRS 遺忘曲線複習"}
+                ? (selectedFolder === "all" ? "全部單字清單" : selectedFolder === "unassigned" ? "未分類單字" : `合輯：${selectedFolder}`)
+                : (isCurrentCardDue ? "⚡ 今日到期複習" : "主動自由刷題 (純練習)")}
             </h2>
           </div>
 
@@ -488,7 +552,7 @@ export function ReviewModal({
                     className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-xs transition shadow-sm flex items-center gap-1.5 whitespace-nowrap"
                   >
                     <Flame className="h-3.5 w-3.5" />
-                    <span>複習此清單 ({localList.length})</span>
+                    <span>開始刷題 ({localList.length})</span>
                   </button>
                 )}
               </div>
@@ -621,7 +685,6 @@ export function ReviewModal({
                         }`}
                       >
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          {/* 多選 Checkbox */}
                           <div
                             onClick={(e) => toggleSelectWord(e, card.id)}
                             className="p-1 text-slate-300 hover:text-indigo-600 transition"
@@ -633,7 +696,6 @@ export function ReviewModal({
                             )}
                           </div>
 
-                          {/* 拖曳把手 */}
                           <div 
                             className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 p-0.5"
                             onClick={(e) => e.stopPropagation()}
@@ -707,25 +769,36 @@ export function ReviewModal({
               <div className="text-center py-12 space-y-4">
                 <CheckCircle2 className="h-16 w-16 text-emerald-500 mx-auto animate-bounce" />
                 <div className="space-y-1">
-                  <h3 className="text-xl font-bold text-slate-900">太棒了！此合輯複習已全數完成</h3>
+                  <h3 className="text-xl font-bold text-slate-900">太棒了！今日複習已全數完成 🎉</h3>
                   <p className="text-xs text-slate-500">
-                    系統已根據艾賓浩斯遺忘曲線為您重新排定下次複習週期。
+                    系統已為您重新排定下次複習週期。
                   </p>
                 </div>
                 <button
                   onClick={() => setViewMode("list")}
                   className="px-6 py-2.5 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-500 transition text-sm shadow-md"
                 >
-                  返回清單
+                  返回單字列表
                 </button>
               </div>
             ) : (
               <div className="space-y-6">
                 <div className="flex justify-between items-center text-xs text-slate-400">
                   <span>進度：{currentIndex + 1} / {localList.length}</span>
-                  <div className="flex items-center gap-1">
-                    <span>熟練度：</span>
-                    {getStatusBadge(currentCard.srs?.interval || 1)}
+                  <div className="flex items-center gap-2">
+                    {isCurrentCardDue ? (
+                      <span className="text-amber-600 font-bold bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                        ⚡ 週期到期複習
+                      </span>
+                    ) : (
+                      <span className="text-indigo-600 font-medium bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200">
+                        💡 提早主動練習
+                      </span>
+                    )}
+                    <div className="flex items-center gap-1">
+                      <span>熟練度：</span>
+                      {getStatusBadge(currentCard.srs?.interval || 1)}
+                    </div>
                   </div>
                 </div>
 
@@ -797,33 +870,66 @@ export function ReviewModal({
           )}
         </div>
 
-        {/* 評分按鈕 */}
+        {/* 評分與切換控制列 */}
         {viewMode === "card" && !isFinished && isFlipped && (
-          <div className="p-4 bg-slate-50 border-t border-slate-100 grid grid-cols-3 gap-2">
-            <button
-              disabled={isSubmitting}
-              onClick={() => handleGrade(1)}
-              className="py-3 px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition flex flex-col items-center gap-0.5"
-            >
-              <span>忘記了 ❌</span>
-              <span className="text-[10px] font-normal opacity-75">重設為 1 天</span>
-            </button>
-            <button
-              disabled={isSubmitting}
-              onClick={() => handleGrade(3)}
-              className="py-3 px-2 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-xl text-xs font-bold transition flex flex-col items-center gap-0.5"
-            >
-              <span>勉強想起 🤔</span>
-              <span className="text-[10px] font-normal opacity-75">標準間隔</span>
-            </button>
-            <button
-              disabled={isSubmitting}
-              onClick={() => handleGrade(5)}
-              className="py-3 px-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold transition flex flex-col items-center gap-0.5"
-            >
-              <span>完美反射 ⚡</span>
-              <span className="text-[10px] font-normal opacity-75">延長週期</span>
-            </button>
+          <div className="p-4 bg-slate-50 border-t border-slate-100 space-y-2.5">
+            <div className="flex items-center justify-between px-1 text-xs text-slate-500">
+              <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={shouldUpdateSRS}
+                  onChange={(e) => setShouldUpdateSRS(e.target.checked)}
+                  className="rounded text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5"
+                />
+                <span className={shouldUpdateSRS ? "font-bold text-indigo-900" : "text-slate-500"}>
+                  {shouldUpdateSRS ? "⚡ 本次評分將更新 SRS 週期排程" : "🔒 純刷題模式（不更動週期排程）"}
+                </span>
+              </label>
+
+              {!shouldUpdateSRS && (
+                <button
+                  type="button"
+                  onClick={handleNextCardOnly}
+                  className="text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1"
+                >
+                  <span>直接下一張</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                disabled={isSubmitting}
+                onClick={() => handleGrade(1)}
+                className="py-3 px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition flex flex-col items-center gap-0.5"
+              >
+                <span>忘記了 ❌</span>
+                <span className="text-[10px] font-normal opacity-75">
+                  {shouldUpdateSRS ? "重設為 1 天" : "下一張"}
+                </span>
+              </button>
+              <button
+                disabled={isSubmitting}
+                onClick={() => handleGrade(3)}
+                className="py-3 px-2 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-xl text-xs font-bold transition flex flex-col items-center gap-0.5"
+              >
+                <span>勉強想起 🤔</span>
+                <span className="text-[10px] font-normal opacity-75">
+                  {shouldUpdateSRS ? "標準間隔" : "下一張"}
+                </span>
+              </button>
+              <button
+                disabled={isSubmitting}
+                onClick={() => handleGrade(5)}
+                className="py-3 px-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold transition flex flex-col items-center gap-0.5"
+              >
+                <span>完美反射 ⚡</span>
+                <span className="text-[10px] font-normal opacity-75">
+                  {shouldUpdateSRS ? "延長週期" : "下一張"}
+                </span>
+              </button>
+            </div>
           </div>
         )}
       </div>
